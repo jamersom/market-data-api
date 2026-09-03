@@ -1,0 +1,43 @@
+# Variáveis de ambiente e credenciais
+.env
+.env.*
+!.env.example
+
+# Binários e artefatos do Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/bin/
+/dist/
+/build/
+
+# Cache e cobertura
+.gocache/
+coverage/
+coverage.out
+coverage.html
+
+# Workspaces e arquivos temporários do Go
+go.work
+go.work.sum
+/tmp/
+/temp/
+
+# Logs
+*.log
+logs/
+
+# Editores e IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+Desktop.ini
