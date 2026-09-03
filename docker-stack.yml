@@ -1,0 +1,46 @@
+services:
+  api:
+    image: ghcr.io/jamersom/market-data-api:${IMAGE_TAG:-latest}
+    environment:
+      TZ: America/Sao_Paulo
+      SERVER_ADDRESS: :8080
+      DATABASE_URL: postgres://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}?sslmode=disable
+      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-10}
+      DB_MIN_CONNECTIONS: ${DB_MIN_CONNECTIONS:-2}
+      DB_MAX_CONN_LIFETIME: ${DB_MAX_CONN_LIFETIME:-30m}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5s}
+    ports:
+      - target: 8080
+        published: ${API_PORT:-8080}
+        protocol: tcp
+        mode: ingress
+    networks:
+      - b3_data_hub
+    deploy:
+      mode: replicated
+      replicas: ${API_REPLICAS:-1}
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+        monitor: 30s
+      rollback_config:
+        parallelism: 1
+        order: stop-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 120s
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          cpus: "0.10"
+          memory: 64M
+
+networks:
+  b3_data_hub:
+    external: true
+    name: ${B3_NETWORK_NAME:-b3-data-hub_b3_data_hub}

@@ -1,0 +1,26 @@
+name: market-data-api
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: market-data-api
+    restart: unless-stopped
+    environment:
+      TZ: America/Sao_Paulo
+      SERVER_ADDRESS: :8080
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-10}
+      DB_MIN_CONNECTIONS: ${DB_MIN_CONNECTIONS:-2}
+      DB_MAX_CONN_LIFETIME: ${DB_MAX_CONN_LIFETIME:-30m}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5s}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    networks:
+      - b3_data_hub
+
+networks:
+  b3_data_hub:
+    external: true
+    name: b3-data-hub-network
