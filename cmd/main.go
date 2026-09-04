@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
+	logger "github.com/jamersom/go-logging"
 	httpadapter "github.com/jamersom/market-data-api/internal/adapters/inbound/http"
 	"github.com/jamersom/market-data-api/internal/adapters/inbound/http/handlers"
 	"github.com/jamersom/market-data-api/internal/adapters/outbound/postgres"
@@ -15,19 +17,44 @@ import (
 	"github.com/joho/godotenv"
 )
 
+var version = "development"
+
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Printf(".env not loaded: %v", err)
+	envErr := godotenv.Load()
+
+	appLogger := logger.New(logger.Config{
+		Level:       os.Getenv("LOG_LEVEL"),
+		Format:      os.Getenv("LOG_FORMAT"),
+		Service:     "market-data-api",
+		Environment: os.Getenv("APP_ENV"),
+		Version:     version,
+		AddSource:   true,
+	})
+	slog.SetDefault(appLogger)
+
+	if envErr != nil {
+		appLogger.Debug(
+			".env not loaded; using system environment variables",
+			"error", envErr,
+		)
 	}
 
+	if err := run(appLogger); err != nil {
+		appLogger.Error("market-data-api stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(appLogger *slog.Logger) error {
 	ctx := context.Background()
 
 	db, err := database.NewPostgresPool(ctx)
 	if err != nil {
-		log.Fatalf("initialize PostgreSQL: %v", err)
+		return fmt.Errorf("initialize PostgreSQL: %w", err)
 	}
-
 	defer db.Close()
+
+	appLogger.Info("PostgreSQL connection established")
 
 	quoteRepository := postgres.NewQuoteRepository(db)
 	getQuoteService := services.NewGetQuoteService(quoteRepository)
@@ -47,10 +74,16 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("market-data-api listening on %s", server.Addr)
+	appLogger.Info(
+		"HTTP server started",
+		"address", server.Addr,
+	)
+
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+		return fmt.Errorf("serve HTTP: %w", err)
 	}
+
+	return nil
 }
 
 func serverAddress() string {

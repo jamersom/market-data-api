@@ -5,10 +5,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        VERSION: ${IMAGE_TAG:-development}
     container_name: market-data-api
     restart: unless-stopped
     environment:
       TZ: America/Sao_Paulo
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
       SERVER_ADDRESS: :8080
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       DB_MAX_CONNECTIONS: ${DB_MAX_CONNECTIONS:-10}
