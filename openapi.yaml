@@ -4,7 +4,7 @@ info:
   version: 1.1.0
   description: Consulta cotações diárias não ajustadas publicadas pelo B3 Data Hub.
 servers:
-  - url: http://localhost:8080
+  - url: /
 paths:
   /quotes/{ticker}:
     get:
