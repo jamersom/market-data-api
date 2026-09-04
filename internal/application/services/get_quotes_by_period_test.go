@@ -65,7 +65,7 @@ func TestGetQuotesByPeriodServiceUsesDefaultsAndNormalizesTicker(t *testing.T) {
 		Total: 1,
 	}
 	repository := &quoteRepositoryStub{page: wantedPage}
-	service := NewGetQuotesByPeriodService(repository)
+	service := NewGetQuotesByPeriodService(repository, discardLogger())
 
 	output, err := service.Execute(context.Background(), inbound.GetQuotesByPeriodInput{
 		Ticker: " petr4 ",
@@ -108,7 +108,7 @@ func TestGetQuotesByPeriodServiceUsesDefaultsAndNormalizesTicker(t *testing.T) {
 
 func TestGetQuotesByPeriodServiceForwardsCustomQuery(t *testing.T) {
 	repository := &quoteRepositoryStub{page: domain.QuotePage{Total: 25}}
-	service := NewGetQuotesByPeriodService(repository)
+	service := NewGetQuotesByPeriodService(repository, discardLogger())
 
 	output, err := service.Execute(context.Background(), inbound.GetQuotesByPeriodInput{
 		Ticker:     "VALE3",
@@ -198,7 +198,7 @@ func TestGetQuotesByPeriodServiceValidations(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &quoteRepositoryStub{}
-			service := NewGetQuotesByPeriodService(repository)
+			service := NewGetQuotesByPeriodService(repository, discardLogger())
 
 			_, err := service.Execute(context.Background(), test.input)
 			if !errors.Is(err, test.wantErr) {
@@ -214,7 +214,7 @@ func TestGetQuotesByPeriodServiceValidations(t *testing.T) {
 func TestGetQuotesByPeriodServiceWrapsRepositoryError(t *testing.T) {
 	repositoryError := errors.New("database unavailable")
 	repository := &quoteRepositoryStub{err: repositoryError}
-	service := NewGetQuotesByPeriodService(repository)
+	service := NewGetQuotesByPeriodService(repository, discardLogger())
 
 	_, err := service.Execute(context.Background(), inbound.GetQuotesByPeriodInput{
 		Ticker: "PETR4",

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jamersom/market-data-api/internal/application/ports/inbound"
@@ -12,13 +13,15 @@ import (
 
 type GetQuotesByPeriodService struct {
 	quotes outbound.QuoteRepository
+	logger *slog.Logger
 }
 
 var _ inbound.GetQuotesByPeriodUseCase = (*GetQuotesByPeriodService)(nil)
 
-func NewGetQuotesByPeriodService(quotes outbound.QuoteRepository) *GetQuotesByPeriodService {
+func NewGetQuotesByPeriodService(quotes outbound.QuoteRepository, logger *slog.Logger) *GetQuotesByPeriodService {
 	return &GetQuotesByPeriodService{
 		quotes: quotes,
+		logger: logger,
 	}
 }
 
@@ -66,25 +69,54 @@ func (s *GetQuotesByPeriodService) Execute(
 		marketType = domain.DefaultMarketType
 	}
 	if marketType < 0 {
-		return inbound.GetQuotesByPeriodOutput{}, domain.ValidationError{Field: "marketType", Message: "marketType must be positive", Err: domain.ErrInvalidMarketType}
+		return inbound.GetQuotesByPeriodOutput{}, domain.ValidationError{
+			Field:   "marketType",
+			Message: "marketType must be positive",
+			Err:     domain.ErrInvalidMarketType,
+		}
 	}
 	limit := input.Limit
 	if limit == 0 {
 		limit = domain.DefaultLimit
 	}
 	if limit < 1 || limit > domain.MaxLimit {
-		return inbound.GetQuotesByPeriodOutput{}, domain.ValidationError{Field: "limit", Message: "limit must be between 1 and 1000", Err: domain.ErrInvalidLimit}
+		return inbound.GetQuotesByPeriodOutput{}, domain.ValidationError{
+			Field:   "limit",
+			Message: "limit must be between 1 and 1000",
+			Err:     domain.ErrInvalidLimit,
+		}
 	}
 	if input.Offset < 0 {
-		return inbound.GetQuotesByPeriodOutput{}, domain.ValidationError{Field: "offset", Message: "offset cannot be negative", Err: domain.ErrInvalidOffset}
+		return inbound.GetQuotesByPeriodOutput{}, domain.ValidationError{
+			Field:   "offset",
+			Message: "offset cannot be negative",
+			Err:     domain.ErrInvalidOffset,
+		}
 	}
 	order := input.Order
 	if order == "" {
 		order = domain.SortAscending
 	}
 	if order != domain.SortAscending && order != domain.SortDescending {
-		return inbound.GetQuotesByPeriodOutput{}, domain.ValidationError{Field: "order", Value: string(order), Message: "order must be asc or desc", Err: domain.ErrInvalidOrder}
+		return inbound.GetQuotesByPeriodOutput{}, domain.ValidationError{
+			Field:   "order",
+			Value:   string(order),
+			Message: "order must be asc or desc",
+			Err:     domain.ErrInvalidOrder,
+		}
 	}
+
+	s.logger.DebugContext(
+		ctx,
+		"getting quotes by period",
+		"ticker", ticker,
+		"from", input.From.Format(time.DateOnly),
+		"to", input.To.Format(time.DateOnly),
+		"market_type", marketType,
+		"limit", limit,
+		"offset", input.Offset,
+		"order", order,
+	)
 
 	page, err := s.quotes.FindByTickerAndPeriod(
 		ctx,
@@ -105,6 +137,14 @@ func (s *GetQuotesByPeriodService) Execute(
 			err,
 		)
 	}
+
+	s.logger.DebugContext(
+		ctx,
+		"quotes by period retrieved",
+		"ticker", ticker,
+		"returned_records", len(page.Records),
+		"total_records", page.Total,
+	)
 
 	return inbound.GetQuotesByPeriodOutput{
 		Page:       page,

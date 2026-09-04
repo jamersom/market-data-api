@@ -3,9 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -177,10 +175,7 @@ func TestGetQuoteServiceWritesStructuredDebugLogs(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	log := slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
-	service := NewGetQuoteService(repository, log)
+	service := NewGetQuoteService(repository, debugJSONLogger(&output))
 
 	_, err := service.Execute(context.Background(), inbound.GetQuoteInput{
 		Ticker: "PETR4",
@@ -204,43 +199,4 @@ func TestGetQuoteServiceWritesStructuredDebugLogs(t *testing.T) {
 	assertLogField(t, entries[1], "ticker", "PETR4")
 	assertLogField(t, entries[1], "market_type", float64(domain.DefaultMarketType))
 	assertLogField(t, entries[1], "trading_date", tradingDate.Format(time.RFC3339))
-}
-
-func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
-}
-
-func decodeLogEntries(t *testing.T, data []byte) []map[string]any {
-	t.Helper()
-
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	entries := make([]map[string]any, 0)
-
-	for decoder.More() {
-		var entry map[string]any
-		if err := decoder.Decode(&entry); err != nil {
-			t.Fatalf("decode log entry: %v", err)
-		}
-		entries = append(entries, entry)
-	}
-
-	return entries
-}
-
-func assertLogField(
-	t *testing.T,
-	entry map[string]any,
-	field string,
-	want any,
-) {
-	t.Helper()
-
-	if entry[field] != want {
-		t.Fatalf(
-			"log field %q = %v, want %v",
-			field,
-			entry[field],
-			want,
-		)
-	}
 }

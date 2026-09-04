@@ -58,7 +58,7 @@ func run(appLogger *slog.Logger) error {
 
 	quoteRepository := postgres.NewQuoteRepository(db)
 	getQuoteService := services.NewGetQuoteService(quoteRepository, appLogger)
-	getQuotesByPeriodService := services.NewGetQuotesByPeriodService(quoteRepository)
+	getQuotesByPeriodService := services.NewGetQuotesByPeriodService(quoteRepository, appLogger)
 	quoteHandler := handlers.NewQuoteHandler(getQuoteService)
 	quoteHistoryHandler := handlers.NewQuoteHistoryHandler(getQuotesByPeriodService)
 
