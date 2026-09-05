@@ -1,11 +1,90 @@
 openapi: 3.1.0
 info:
   title: Market Data API
-  version: 1.1.0
+  version: 1.2.0
   description: Consulta cotações diárias não ajustadas publicadas pelo B3 Data Hub.
 servers:
   - url: /
 paths:
+  /comparisons:
+    get:
+      operationId: compareQuotesGet
+      summary: Compara o desempenho de dois a dez ativos
+      description: >-
+        Consulta somente leitura, com período inclusivo de até cinco anos e timeout de cinco segundos.
+        Tickers são normalizados e duplicidades são rejeitadas. Parâmetros desconhecidos ou
+        repetidos são rejeitados. Preços não são ajustados por eventos corporativos.
+        Pelo menos dois ativos devem ter dois fechamentos positivos em datas distintas.
+        Volatilidade amostral anualizada exige três cotações; correlação exige dois intervalos
+        de retorno coincidentes e variância positiva. Métricas indisponíveis são omitidas.
+      parameters:
+        - name: tickers
+          in: query
+          required: true
+          style: form
+          explode: false
+          schema:
+            type: array
+            minItems: 2
+            maxItems: 10
+            uniqueItems: true
+            items: { type: string, example: PETR4 }
+          example: [PETR4, VALE3]
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - $ref: '#/components/parameters/MarketType'
+        - name: metrics
+          in: query
+          style: form
+          explode: false
+          schema: { $ref: '#/components/schemas/ComparisonMetrics' }
+        - name: benchmark
+          in: query
+          description: Ticker da mesma fonte; resumo separado, sem participar automaticamente dos rankings. Sem dados, retorna insufficient_data.
+          schema: { type: string, example: BOVA11 }
+        - name: includeSeries
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200': { $ref: '#/components/responses/ComparisonSuccess' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '422': { $ref: '#/components/responses/InsufficientComparisonData' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '504': { $ref: '#/components/responses/RequestTimeout' }
+    post:
+      operationId: compareQuotesPost
+      summary: Compara ativos a partir de um corpo JSON
+      description: >-
+        Consulta somente leitura com as mesmas regras e resposta do GET /comparisons.
+        Não persiste a comparação. Aceita um único objeto JSON, sem campos desconhecidos,
+        com tamanho máximo de 64 KiB. Timeout de cinco segundos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ComparisonRequest' }
+            example:
+              tickers: [PETR4, VALE3]
+              from: '2025-01-01'
+              to: '2025-12-31'
+              metrics: [return, volatility, drawdown]
+              includeSeries: false
+      responses:
+        '200': { $ref: '#/components/responses/ComparisonSuccess' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '413':
+          description: Corpo excede 64 KiB (request_too_large)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '415':
+          description: Content-Type deve ser application/json (unsupported_media_type)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/InsufficientComparisonData' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '504': { $ref: '#/components/responses/RequestTimeout' }
   /quotes/{ticker}:
     get:
       operationId: getLatestQuote
@@ -70,6 +149,113 @@ components:
       description: Código do tipo de mercado B3; 10 representa mercado à vista.
       schema: { type: integer, minimum: 1, default: 10 }
   schemas:
+    ComparisonMetrics:
+      type: array
+      description: Omissão ou lista JSON vazia aplica as métricas padrão; duplicidades são removidas.
+      default: [return, volatility, drawdown, averageVolume, highLow, bestWorstDay]
+      items:
+        type: string
+        enum: [return, volatility, drawdown, averageVolume, highLow, bestWorstDay, correlation]
+    ComparisonRequest:
+      type: object
+      additionalProperties: false
+      required: [tickers, from, to]
+      properties:
+        tickers:
+          type: array
+          minItems: 2
+          maxItems: 10
+          uniqueItems: true
+          description: Entre 2 e 10 tickers únicos após normalização de espaços e letras maiúsculas.
+          items: { type: string, example: PETR4 }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        marketType: { type: integer, minimum: 1, default: 10 }
+        metrics: { $ref: '#/components/schemas/ComparisonMetrics' }
+        benchmark:
+          type: string
+          description: Ticker consultado na mesma fonte. Não resolve identificadores de índices externos nem calcula excesso de retorno.
+        includeSeries: { type: boolean, default: false }
+    ComparisonEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [assets, ranking]
+          properties:
+            assets:
+              type: array
+              description: Preserva a ordem solicitada, incluindo ativos com dados insuficientes.
+              items: { $ref: '#/components/schemas/AssetComparison' }
+            ranking:
+              type: object
+              description: Ignora métricas indisponíveis; empates favorecem o primeiro ticker solicitado.
+              properties:
+                highestReturn: { type: string }
+                lowestVolatility: { type: string }
+                lowestDrawdown: { type: string, description: Ativo com drawdown mais próximo de zero. }
+            correlations:
+              type: array
+              description: Pearson sem arredondamento adicional; pares indefinidos são omitidos.
+              items:
+                type: object
+                required: [tickerA, tickerB, value]
+                properties:
+                  tickerA: { type: string }
+                  tickerB: { type: string }
+                  value: { type: number, minimum: -1, maximum: 1 }
+            benchmark: { $ref: '#/components/schemas/AssetComparison' }
+        meta:
+          type: object
+          required: [requestedTickers, from, to, marketType, metrics, priceAdjustment, currency, source, calculationVersion]
+          properties:
+            requestedTickers: { type: array, items: { type: string } }
+            from: { type: string, format: date }
+            to: { type: string, format: date }
+            marketType: { type: integer }
+            metrics: { $ref: '#/components/schemas/ComparisonMetrics' }
+            priceAdjustment: { type: string, const: unadjusted }
+            currency: { type: string, const: BRL }
+            source: { type: string, const: B3 COTAHIST }
+            calculationVersion: { type: string, const: '1.0' }
+    AssetComparison:
+      type: object
+      required: [ticker, status, availableFrom, availableTo]
+      description: Métricas não solicitadas ou indisponíveis são omitidas. Percentuais são arredondados a duas casas na apresentação.
+      properties:
+        ticker: { type: string }
+        status: { type: string, enum: [available, insufficient_data] }
+        availableFrom: { type: [string, 'null'], format: date }
+        availableTo: { type: [string, 'null'], format: date }
+        initialPrice: { $ref: '#/components/schemas/Money' }
+        finalPrice: { $ref: '#/components/schemas/Money' }
+        absoluteReturn: { $ref: '#/components/schemas/Money' }
+        percentageReturn: { type: number }
+        annualizedVolatility: { type: number, description: Desvio padrão amostral dos retornos multiplicado por sqrt(252) e 100. }
+        maximumDrawdown: { type: number, maximum: 0 }
+        averageDailyVolume: { $ref: '#/components/schemas/Money' }
+        lowestPrice: { $ref: '#/components/schemas/Money' }
+        highestPrice: { $ref: '#/components/schemas/Money' }
+        bestDay: { $ref: '#/components/schemas/ComparisonDay' }
+        worstDay: { $ref: '#/components/schemas/ComparisonDay' }
+        message: { type: string }
+        series:
+          type: array
+          description: Incluída apenas quando solicitada e o ativo possui dados suficientes.
+          items:
+            type: object
+            required: [date, closePrice, normalizedPerformance]
+            properties:
+              date: { type: string, format: date }
+              closePrice: { $ref: '#/components/schemas/Money' }
+              normalizedPerformance: { type: number, description: Série com referência inicial igual a 100. }
+    ComparisonDay:
+      type: object
+      required: [date, return]
+      properties:
+        date: { type: string, format: date }
+        return: { type: number, description: Retorno percentual do pregão. }
     Quote:
       type: object
       required: [ticker, tradingDate, currency, marketType, openPrice, highPrice, lowPrice, closePrice]
@@ -150,6 +336,26 @@ components:
             expectedFormat: { type: string }
             retryable: { type: boolean }
   responses:
+    ComparisonSuccess:
+      description: Comparação calculada; pode conter ativos ou benchmark com dados insuficientes.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ComparisonEnvelope' }
+    InsufficientComparisonData:
+      description: Menos de dois ativos com dados suficientes (insufficient_comparison_data).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: Erro interno sem exposição de detalhes do banco (internal_error).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RequestTimeout:
+      description: Tempo limite da consulta excedido (request_timeout).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     BadRequest:
       description: Parâmetro inválido
       content:
