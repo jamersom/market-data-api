@@ -61,9 +61,11 @@ func run(appLogger *slog.Logger) error {
 	getQuotesByPeriodService := services.NewGetQuotesByPeriodService(quoteRepository, appLogger)
 	quoteHandler := handlers.NewQuoteHandler(getQuoteService)
 	quoteHistoryHandler := handlers.NewQuoteHistoryHandler(getQuotesByPeriodService)
+	compareQuotesService := services.NewCompareQuotesService(quoteRepository, appLogger)
+	comparisonsHandler := handlers.NewComparisonsHandler(compareQuotesService)
 
 	mux := http.NewServeMux()
-	httpadapter.RegisterRoutes(mux, quoteHandler, quoteHistoryHandler)
+	httpadapter.RegisterRoutes(mux, quoteHandler, quoteHistoryHandler, comparisonsHandler)
 
 	server := &http.Server{
 		Addr:              serverAddress(),

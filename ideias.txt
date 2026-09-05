@@ -1,0 +1,119 @@
+Sim, é viável, mas eu posicionaria o produto de um jeito específico: não como “uma API que responde perguntas sobre ações”, e sim como uma plataforma B2B de dados financeiros + camada de IA conversacional e analítica.
+
+A oportunidade existe porque corretoras e instituições financeiras já consomem dados via APIs, e a própria B3 mantém um ecossistema B2B de APIs e produtos de dados para empresas.
+
+O seu diferencial teria que estar acima do dado bruto. Por exemplo:
+
+Fontes de dados
+   ↓
+B3 / COTAHIST / feeds licenciados
+   ↓
+Sua API Go
+   ├── histórico
+   ├── indicadores
+   ├── rankings
+   ├── eventos
+   └── dados normalizados
+          ↓
+Camada LLM
+   ├── linguagem natural
+   ├── geração de consultas
+   ├── explicações
+   ├── comparação entre ativos
+   └── resumo de mercado
+          ↓
+Corretora / banco / fintech
+
+A corretora poderia perguntar algo como:
+
+“Qual foi a maior cotação da VALE3 em agosto?”
+
+O LLM não deveria responder de memória. Ele deveria transformar a pergunta em uma chamada para sua própria API:
+
+GET /v1/assets/VALE3/highest?from=2026-08-01&to=2026-08-31
+
+Sua API retornaria:
+
+{
+  "ticker": "VALE3",
+  "date": "2026-08-31",
+  "highPrice": "79.70",
+  "currency": "BRL",
+  "source": "B3"
+}
+
+E só então o LLM responderia ao usuário:
+
+“A maior cotação da VALE3 em agosto foi R$ 79,70, registrada em 31/08/2026.”
+
+Esse desenho é importante porque o LLM não vira a fonte da verdade. A fonte da verdade continua sendo sua camada de dados.
+
+Para corretoras, eu enxergaria pelo menos quatro produtos possíveis:
+
+Financial Data API — históricos, OHLCV, ativos, indicadores e eventos.
+Natural Language Query API — perguntas em português convertidas em consultas estruturadas.
+Copilot para investidores/assessores — perguntas sobre carteira, mercado e ativos.
+Insights API — resumos e explicações gerados sobre dados estruturados.
+
+O ponto mais delicado não é técnico. É licenciamento dos dados. A B3 mantém políticas comerciais específicas para consumo e distribuição de market data; se você pretende redistribuir dados para corretoras ou clientes finais, precisa validar exatamente quais direitos sua fonte permite.
+
+Também existe uma segunda fronteira: recomendação de investimentos. Se o LLM apenas responde perguntas factuais como “qual foi a máxima da VALE3?” ou “qual foi o volume médio?”, você está muito mais próximo de um produto de dados. Mas, se começar a responder “compre VALE3”, “qual ação devo comprar?” ou gerar recomendações personalizadas, entra numa área regulatória diferente. A CVM trata orientação, recomendação e aconselhamento individualizado sobre valores mobiliários como atividade de consultoria, e sistemas automatizados de investimento também podem cair nesse contexto regulado.
+
+Por isso eu começaria sem recomendação de compra/venda.
+
+Seu MVP poderia fazer muito bem perguntas como:
+
+“Qual foi a máxima da PETR4 no mês passado?”
+
+“Compare VALE3 e PETR4 em volume nos últimos 30 pregões.”
+
+“Qual foi a variação da ITUB4 entre janeiro e agosto?”
+
+“Quais foram os 10 ativos com maior volume no pregão?”
+
+“Mostre os dias em que VALE3 caiu mais de 3%.”
+
+“Qual foi o maior volume financeiro da LEVE3 em 2026?”
+
+Isso já tem bastante valor.
+
+Tecnicamente, sua experiência combina muito com esse produto porque ele envolveria Go, APIs, PostgreSQL, cache, concorrência, mensageria, observabilidade e cloud, além de uma camada LLM como consumidor das ferramentas da API.
+
+Eu desenharia a arquitetura inicial assim:
+
+                ┌──────────────────┐
+                │     Cliente      │
+                │ Corretora / App  │
+                └────────┬─────────┘
+                         │
+                         ▼
+                 ┌───────────────┐
+                 │ API Gateway   │
+                 └───────┬───────┘
+                         │
+           ┌─────────────┴─────────────┐
+           ▼                           ▼
+    ┌──────────────┐           ┌───────────────┐
+    │ Financial API│           │  AI Gateway   │
+    │      Go      │◄──────────│      Go       │
+    └───────┬──────┘           └───────┬───────┘
+            │                          │
+            ▼                          ▼
+       PostgreSQL                  LLM API
+            │
+            ▼
+      B3 / Market Data
+
+E eu colocaria uma regra arquitetural forte:
+
+O LLM nunca calcula nem inventa números financeiros quando o dado pode ser obtido pela API.
+
+Ele chama ferramentas.
+
+Isso pode ser feito via tool/function calling ou até usando MCP, caso você queira expor seu B3 Data Hub como um servidor de ferramentas para diferentes modelos.
+
+Em termos comerciais, eu acho mais interessante vender para fintechs pequenas, plataformas de análise, casas de research, assessorias e softwares financeiros antes de tentar entrar diretamente nas grandes corretoras. Grandes corretoras normalmente têm ciclos de contratação, segurança, compliance, SLA e integração muito mais exigentes.
+
+Então minha avaliação é: sim, a ideia é viável e tem mais potencial do que simplesmente criar outra API de cotação. O diferencial seria transformar dados financeiros confiáveis em uma infraestrutura de consulta inteligente, mantendo a precisão dos dados fora do LLM.
+
+O próximo passo que eu faria seria definir um MVP com uns 10 endpoints financeiros + 10 perguntas em linguagem natural que o LLM consiga responder exclusivamente usando esses endpoints. Isso já seria suficiente para demonstrar o produto para uma fintech ou corretora.

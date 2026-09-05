@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -12,6 +13,14 @@ func writeError(w http.ResponseWriter, err error) {
 	var validationErr domain.ValidationError
 
 	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		writeJSON(w, http.StatusGatewayTimeout, response.Error{Error: response.ErrorDetail{
+			Code: "request_timeout", Message: "request timed out", Retryable: true,
+		}})
+	case errors.Is(err, domain.ErrInsufficientComparisonData):
+		writeJSON(w, http.StatusUnprocessableEntity, response.Error{Error: response.ErrorDetail{
+			Code: "insufficient_comparison_data", Message: "at least two assets must have sufficient data", Retryable: false,
+		}})
 	case errors.As(err, &validationErr):
 		code := validationCode(validationErr.Err)
 		expectedFormat := ""
@@ -46,6 +55,10 @@ func writeError(w http.ResponseWriter, err error) {
 
 func validationCode(err error) string {
 	switch {
+	case errors.Is(err, domain.ErrInvalidTickers):
+		return "invalid_tickers"
+	case errors.Is(err, domain.ErrInvalidMetric):
+		return "invalid_metric"
 	case errors.Is(err, domain.ErrInvalidTicker):
 		return "invalid_ticker"
 	case errors.Is(err, domain.ErrInvalidDateRange):
