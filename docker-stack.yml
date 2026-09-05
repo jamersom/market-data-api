@@ -19,6 +19,7 @@ services:
       - DockerNet
 
     deploy:
+      mode: replicated
       replicas: ${API_REPLICAS:-1}
 
       restart_policy:
@@ -26,7 +27,7 @@ services:
 
       labels:
         - "traefik.enable=true"
-        - "traefik.http.routers.marketdata.rule=Host(marketdata.techcomp.net.br)"
+        - 'traefik.http.routers.marketdata.rule=Host(marketdata.techcomp.net.br)'
         - "traefik.http.routers.marketdata.entrypoints=websecure"
         - "traefik.http.routers.marketdata.tls=true"
         - "traefik.http.routers.marketdata.tls.certresolver=letsencryptresolver"
