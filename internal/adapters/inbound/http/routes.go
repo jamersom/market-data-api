@@ -36,7 +36,10 @@ func RegisterRoutes(
 	mux *http.ServeMux,
 	quoteHandler *handlers.QuoteHandler,
 	quoteHistoryHandler *handlers.QuoteHistoryHandler,
+	comparisonsHandler *handlers.ComparisonsHandler,
 ) {
+	mux.HandleFunc("GET /comparisons", comparisonsHandler.Get)
+	mux.HandleFunc("POST /comparisons", comparisonsHandler.Post)
 	mux.HandleFunc("GET /quotes/{ticker}", quoteHandler.Get)
 	mux.HandleFunc("GET /quotes/{ticker}/history", quoteHistoryHandler.Get)
 	mux.HandleFunc("GET /openapi.yaml", serveOpenAPI)

@@ -1,11 +1,44 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jamersom/market-data-api/internal/adapters/inbound/http/handlers"
+	"github.com/jamersom/market-data-api/internal/application/ports/inbound"
 )
+
+type routeComparisonStub struct{ calls int }
+
+func (s *routeComparisonStub) Execute(context.Context, inbound.CompareQuotesInput) (inbound.CompareQuotesOutput, error) {
+	s.calls++
+	return inbound.CompareQuotesOutput{}, nil
+}
+
+func TestComparisonRoutes(t *testing.T) {
+	stub := &routeComparisonStub{}
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, handlers.NewQuoteHandler(nil), handlers.NewQuoteHistoryHandler(nil), handlers.NewComparisonsHandler(stub))
+	for _, method := range []string{"GET", "POST", "DELETE"} {
+		request := httptest.NewRequest(method, "/comparisons?tickers=PETR4,VALE3&from=2025-01-01&to=2025-01-31", strings.NewReader(`{"tickers":["PETR4","VALE3"],"from":"2025-01-01","to":"2025-01-31"}`))
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, request)
+		want := 200
+		if method == "DELETE" {
+			want = 405
+		}
+		if recorder.Code != want {
+			t.Fatalf("%s: %d %s", method, recorder.Code, recorder.Body)
+		}
+	}
+	if stub.calls != 2 {
+		t.Fatalf("chamadas: %d", stub.calls)
+	}
+}
 
 func TestServeOpenAPI(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)

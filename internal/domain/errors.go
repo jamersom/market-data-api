@@ -10,13 +10,16 @@ var (
 	ErrTradeNotFound  = errors.New("trade not found")
 	ErrCandleNotFound = errors.New("candle not found")
 
-	ErrInvalidTicker     = errors.New("invalid ticker")
-	ErrInvalidDateRange  = errors.New("invalid date range")
-	ErrInvalidTimeframe  = errors.New("invalid timeframe")
-	ErrInvalidLimit      = errors.New("invalid limit")
-	ErrInvalidOffset     = errors.New("invalid offset")
-	ErrInvalidOrder      = errors.New("invalid order")
-	ErrInvalidMarketType = errors.New("invalid market type")
+	ErrInvalidTicker              = errors.New("invalid ticker")
+	ErrInvalidDateRange           = errors.New("invalid date range")
+	ErrInvalidTimeframe           = errors.New("invalid timeframe")
+	ErrInvalidLimit               = errors.New("invalid limit")
+	ErrInvalidOffset              = errors.New("invalid offset")
+	ErrInvalidOrder               = errors.New("invalid order")
+	ErrInvalidMarketType          = errors.New("invalid market type")
+	ErrInvalidTickers             = errors.New("invalid tickers")
+	ErrInvalidMetric              = errors.New("invalid comparison metric")
+	ErrInsufficientComparisonData = errors.New("insufficient comparison data")
 )
 
 type ValidationError struct {
