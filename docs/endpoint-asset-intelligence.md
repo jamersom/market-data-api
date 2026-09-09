@@ -1,20 +1,10 @@
-> Contrato atualizado: consulte [intelligence-contrato-atual.md](intelligence-contrato-atual.md).
-> Os trechos abaixo registram etapas anteriores. Campos futuros foram removidos
-> do JSON; complete/partial considera apenas indicadores implementados.
-> O calendário observado já está conectado e a cobertura anual exige includeDetails=true.
+# Proposta original de Asset Intelligence
 
-# Endpoint `GET /assets/{ticker}/intelligence`
-
-> Calendário: a API agora usa as views consolidadas do `b3-data-hub` com política
-> de integridade observada e metadados de origem/cobertura. Ver
-> [calendario-intelligence.md](calendario-intelligence.md). A exigência original
-> de um calendário exclusivamente oficial foi substituída por essa política.
-
-> Status: desenho original da implementação. A primeira versão HTTP está
-> implementada localmente; o contrato vigente está em `../openapi.yaml`.
-> Benchmark e demais evoluções deste desenho ainda não estão disponíveis.
-> Sem calendário verificado, indicadores retornam indisponíveis. Consulte
-> `asset-intelligence-pendencias.md` para o estado atual; deploy ainda pendente.
+> Este documento preserva o desenho original, incluindo recursos futuros e exemplos
+> que não representam a resposta atual. Para implementar um consumidor, use o
+> [contrato atual](intelligence-contrato-atual.md) e o [OpenAPI](../openapi.yaml).
+> O calendário observado já está integrado. Consulte as
+> [pendências atuais](asset-intelligence-pendencias.md) para a ordem de continuidade.
 
 ## Objetivo
 

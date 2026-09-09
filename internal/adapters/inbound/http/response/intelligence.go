@@ -41,18 +41,18 @@ type IntelligenceUnavailable struct {
 	Reason string `json:"reason"`
 }
 type IntelligenceMetadata struct {
-	Calendar           IntelligenceCalendar      `json:"calendar"`
+	Calendar           *IntelligenceCalendar     `json:"calendar,omitempty"`
 	Status             string                    `json:"status"`
 	MarketType         int                       `json:"market_type"`
-	RequestedAsOf      *string                   `json:"requested_as_of"`
+	RequestedAsOf      *string                   `json:"requested_as_of,omitempty"`
 	AsOf               string                    `json:"as_of"`
 	Source             string                    `json:"source"`
 	PriceAdjustment    string                    `json:"price_adjustment"`
 	WindowUnit         string                    `json:"window_unit"`
 	PercentageUnit     string                    `json:"percentage_unit"`
-	CalculationVersion string                    `json:"calculation_version"`
-	DataVersion        string                    `json:"data_version"`
-	RSISeedFrom        string                    `json:"rsi_seed_from"`
+	CalculationVersion string                    `json:"calculation_version,omitempty"`
+	DataVersion        string                    `json:"data_version,omitempty"`
+	RSISeedFrom        string                    `json:"rsi_seed_from,omitempty"`
 	Unavailable        []IntelligenceUnavailable `json:"unavailable"`
 }
 

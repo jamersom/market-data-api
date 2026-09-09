@@ -50,13 +50,16 @@ versão dos arquivos que era conhecida no passado.
 
 ## Metadados HTTP
 
-`meta.calendar` contém:
+Com `includeDetails=true`, `meta.calendar` contém:
 
 - `source`: `cotahist_observed`.
 - `policy`: `observed_import_integrity_v1`.
 - `version`: SHA-256 da política, mercado, intervalo, cobertura e sessões.
 - `official_verified`: `false` para a fonte observada.
-- `coverage`: ano, limites observados, integridade e versão de cada publicação; somente com `includeDetails=true` e cobertura disponível.
+- `coverage`: ano, limites observados, integridade e versão de cada publicação, quando disponível.
+
+Quando `includeDetails` é falso ou não é informado, todo o bloco
+`meta.calendar` é omitido da resposta.
 
 O hash do calendário deve acompanhar `data_version` e `calculation_version`
 em qualquer cache futuro. Alterações de cobertura/versão mudam esse hash.

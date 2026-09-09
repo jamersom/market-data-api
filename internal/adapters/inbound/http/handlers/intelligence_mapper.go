@@ -48,7 +48,7 @@ func IntelligenceResponse(out inbound.GetAssetIntelligenceOutput) response.Intel
 		d.Liquidity.AverageDailyVolume20D = &v
 	}
 	m := &result.Meta
-	m.Calendar = response.IntelligenceCalendar{Source: out.Calendar.Source, Version: out.Calendar.Version, Policy: out.Calendar.Policy, OfficialVerified: out.Calendar.OfficialVerified, Coverage: []response.IntelligenceCalendarCoverage{}}
+	m.Calendar = &response.IntelligenceCalendar{Source: out.Calendar.Source, Version: out.Calendar.Version, Policy: out.Calendar.Policy, OfficialVerified: out.Calendar.OfficialVerified, Coverage: []response.IntelligenceCalendarCoverage{}}
 	for _, c := range out.Calendar.Coverage {
 		m.Calendar.Coverage = append(m.Calendar.Coverage, response.IntelligenceCalendarCoverage{Year: c.Year, From: c.From.Format(time.DateOnly), To: c.To.Format(time.DateOnly), IntegrityValidated: c.IntegrityValidated, Version: c.Version})
 	}

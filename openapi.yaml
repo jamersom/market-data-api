@@ -17,7 +17,7 @@ paths:
         Sem asOf usa a última cotação até hoje em São Paulo. A referência efetiva
         pode anteceder a solicitada. Preços não ajustados. Janelas d são pregões.
         Usa calendário observado consolidado do COTAHIST, com integridade de cada
-        importação validada e origem/versão em meta.calendar. Não equivale a um
+        importação validada e origem/versão em meta.calendar quando includeDetails=true. Não equivale a um
         calendário oficial independente: omissões globais na fonte não são detectadas.
         Anos ausentes ou cobertura inválida indisponibilizam somente as janelas afetadas.
         Sessões são limitadas à última cotação até asOf. Benchmark não é aceito nesta versão.
@@ -27,7 +27,7 @@ paths:
         - $ref: '#/components/parameters/MarketType'
         - name: includeDetails
           in: query
-          description: Inclui a cobertura anual detalhada em meta.calendar.coverage.
+          description: Inclui meta.calendar, meta.calculation_version, meta.data_version e meta.rsi_seed_from.
           schema: { type: boolean, default: false }
         - name: asOf
           in: query
@@ -238,10 +238,11 @@ components:
                 average_daily_volume_20d: { $ref: '#/components/schemas/IntelligenceMoney', description: Volume financeiro médio de vinte pregões; fração de centavo truncada. }
         meta:
           type: object
-          required: [calendar, status, market_type, requested_as_of, as_of, source, price_adjustment, window_unit, percentage_unit, calculation_version, data_version, rsi_seed_from, unavailable]
+          required: [status, market_type, as_of, source, price_adjustment, window_unit, percentage_unit, unavailable]
           properties:
             calendar:
               type: object
+              description: Presente somente quando includeDetails=true.
               required: [source, version, policy, official_verified]
               properties:
                 source: { type: string, example: cotahist_observed }
@@ -261,15 +262,15 @@ components:
                       version: { type: string }
             status: { type: string, enum: [complete, partial] }
             market_type: { type: integer, minimum: 1 }
-            requested_as_of: { type: [string, 'null'], format: date }
+            requested_as_of: { type: string, format: date, description: Presente somente quando asOf é informado. }
             as_of: { type: string, format: date }
             source: { type: string, const: B3 COTAHIST }
             price_adjustment: { type: string, const: unadjusted }
             window_unit: { type: string, const: trading_sessions }
             percentage_unit: { type: string, const: percent }
-            calculation_version: { type: string, example: '1.0' }
-            data_version: { type: string, description: Hash do histórico e seus metadados; não inclui calendário. }
-            rsi_seed_from: { type: string, format: date }
+            calculation_version: { type: string, example: '1.0', description: Presente somente quando includeDetails=true. }
+            data_version: { type: string, description: Presente somente quando includeDetails=true. Hash do histórico e seus metadados; não inclui calendário. }
+            rsi_seed_from: { type: string, format: date, description: Presente somente quando includeDetails=true. }
             unavailable:
               type: array
               items:

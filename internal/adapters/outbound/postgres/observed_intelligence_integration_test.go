@@ -60,7 +60,7 @@ func TestObservedIntelligenceIntegration(t *testing.T) {
 	mux.HandleFunc("GET /assets/{ticker}/intelligence", handlers.NewIntelligenceHandler(services.NewGetAssetIntelligenceService(repository, nil)).Get)
 	rec := httptest.NewRecorder()
 	httpStart := time.Now()
-	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/assets/PETR4/intelligence?asOf="+asOf.Format(time.DateOnly), nil).WithContext(ctx))
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/assets/PETR4/intelligence?asOf="+asOf.Format(time.DateOnly)+"&includeDetails=true", nil).WithContext(ctx))
 	if rec.Code != 200 {
 		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
 	}

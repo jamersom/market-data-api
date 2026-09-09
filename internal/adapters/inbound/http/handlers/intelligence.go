@@ -74,7 +74,10 @@ func (h *IntelligenceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	result := IntelligenceResponse(output)
 	if !includeDetails {
-		result.Meta.Calendar.Coverage = nil
+		result.Meta.Calendar = nil
+		result.Meta.CalculationVersion = ""
+		result.Meta.DataVersion = ""
+		result.Meta.RSISeedFrom = ""
 	}
 	writeJSON(w, http.StatusOK, result)
 }

@@ -14,22 +14,39 @@ import (
 
 type payloadStub struct{ calls int }
 
-func (s *payloadStub) Execute(context.Context, inbound.GetAssetIntelligenceInput) (inbound.GetAssetIntelligenceOutput, error) {
+func (s *payloadStub) Execute(_ context.Context, input inbound.GetAssetIntelligenceInput) (inbound.GetAssetIntelligenceOutput, error) {
 	s.calls++
 	zero := 0.0
-	return inbound.GetAssetIntelligenceOutput{Ticker: "PETR4", Status: "partial", Return7D: &zero,
-		Calendar:    domain.IntelligenceCalendarMetadata{Source: "cotahist_observed", Coverage: []domain.CalendarCoverage{{Year: 2023, From: time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC), To: time.Date(2023, 12, 28, 0, 0, 0, 0, time.UTC)}}},
-		Unavailable: []inbound.IntelligenceUnavailable{{Field: "momentum.rsi14", Reason: "insufficient_history"}}}, nil
+	out := inbound.GetAssetIntelligenceOutput{Ticker: "PETR4", Status: "partial", Return7D: &zero,
+		AsOf: time.Date(2023, 12, 28, 0, 0, 0, 0, time.UTC),
+		Calendar: domain.IntelligenceCalendarMetadata{Source: "cotahist_observed", Version: "calendar-v1", Policy: "observed_import_integrity_v1",
+			Coverage: []domain.CalendarCoverage{{Year: 2023, From: time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC), To: time.Date(2023, 12, 28, 0, 0, 0, 0, time.UTC)}}},
+		CalculationVersion: "1.0", DataVersion: "data-v1", RSISeedFrom: time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC),
+		Unavailable: []inbound.IntelligenceUnavailable{{Field: "momentum.rsi14", Reason: "insufficient_history"}}}
+	if !input.AsOf.IsZero() {
+		requested := input.AsOf
+		out.RequestedAsOf = &requested
+	}
+	return out, nil
 }
 
 func TestIntelligenceCompactPayload(t *testing.T) {
-	for _, query := range []string{"", "?includeDetails=false", "?includeDetails=true"} {
-		t.Run(query, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, query            string
+		details, requestedAsOf bool
+	}{
+		{name: "default"},
+		{name: "details false", query: "?includeDetails=false"},
+		{name: "details true", query: "?includeDetails=true", details: true},
+		{name: "asOf compact", query: "?asOf=2023-12-28", requestedAsOf: true},
+		{name: "asOf details", query: "?asOf=2023-12-28&includeDetails=true", details: true, requestedAsOf: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			stub := &payloadStub{}
 			mux := http.NewServeMux()
 			mux.HandleFunc("GET /assets/{ticker}/intelligence", NewIntelligenceHandler(stub).Get)
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, httptest.NewRequest("GET", "/assets/PETR4/intelligence"+query, nil))
+			mux.ServeHTTP(rec, httptest.NewRequest("GET", "/assets/PETR4/intelligence"+tc.query, nil))
 			if rec.Code != 200 {
 				t.Fatalf("HTTP %d", rec.Code)
 			}
@@ -57,9 +74,23 @@ func TestIntelligenceCompactPayload(t *testing.T) {
 			if _, ok := meta["rules_version"]; ok {
 				t.Fatal("rules version placeholder present")
 			}
-			_, hasCoverage := meta["calendar"].(map[string]any)["coverage"]
-			if hasCoverage != (query == "?includeDetails=true") {
-				t.Fatal("details option mismatch")
+			for _, key := range []string{"calendar", "calculation_version", "data_version", "rsi_seed_from"} {
+				if _, ok := meta[key]; ok != tc.details {
+					t.Fatalf("field %s presence does not match includeDetails", key)
+				}
+			}
+			if tc.details {
+				calendar := meta["calendar"].(map[string]any)
+				if _, ok := calendar["coverage"]; !ok {
+					t.Fatal("calendar coverage missing from detailed response")
+				}
+			}
+			requested, ok := meta["requested_as_of"]
+			if ok != tc.requestedAsOf {
+				t.Fatal("requested_as_of presence does not match asOf")
+			}
+			if tc.requestedAsOf && requested != "2023-12-28" {
+				t.Fatalf("unexpected requested_as_of: %v", requested)
 			}
 		})
 	}

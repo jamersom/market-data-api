@@ -31,9 +31,9 @@ Esses recursos continuam como evolução futura, exigindo metodologia e/ou fonte
 Quando tudo está disponível, `unavailable` retorna `[]`, indicando ausência de
 problemas; recursos futuros não geram entradas `not_implemented`.
 
-Mantemos referência efetiva, fonte, unidades e versões para interpretar os
-valores e identificar mudanças nas séries. `requested_as_of: null` significa
-que o cliente não informou uma data. Não representa um indicador faltante.
+Mantemos referência efetiva, fonte e unidades para interpretar os valores.
+Versões, calendário e semente do RSI ficam disponíveis na resposta detalhada.
+`requested_as_of` é omitido quando o cliente não informa uma data.
 
 ## Consultas
 
@@ -44,9 +44,53 @@ GET /assets/PETR4/intelligence?includeDetails=true
 ```
 
 `includeDetails` aceita somente `true` ou `false` e assume `false`.
-A cobertura anual `meta.calendar.coverage` é omitida por padrão e incluída
-quando solicitada e disponível. Fonte, política e versão do calendário continuam
-na resposta compacta. Esse parâmetro altera apenas a apresentação, não os cálculos.
+`meta.calendar`, `meta.calculation_version`, `meta.data_version` e
+`meta.rsi_seed_from` são omitidos por padrão e incluídos quando solicitado.
+Quando o calendário é incluído, sua cobertura anual também é retornada quando
+disponível. Esse parâmetro altera apenas a apresentação, não os cálculos.
+
+## Exemplos de metadados
+
+Resposta compacta, sem `asOf`:
+
+```json
+{
+  "status": "complete",
+  "market_type": 10,
+  "as_of": "2026-09-04",
+  "source": "B3 COTAHIST",
+  "price_adjustment": "unadjusted",
+  "window_unit": "trading_sessions",
+  "percentage_unit": "percent",
+  "unavailable": []
+}
+```
+
+Resposta com `asOf` e `includeDetails=true`:
+
+```json
+{
+  "calendar": {
+    "source": "cotahist_observed",
+    "version": "sha256-v1:<hash>",
+    "policy": "observed_import_integrity_v1",
+    "official_verified": false,
+    "coverage": []
+  },
+  "status": "complete",
+  "market_type": 10,
+  "requested_as_of": "2026-09-04",
+  "as_of": "2026-09-04",
+  "source": "B3 COTAHIST",
+  "price_adjustment": "unadjusted",
+  "window_unit": "trading_sessions",
+  "percentage_unit": "percent",
+  "calculation_version": "1.0",
+  "data_version": "sha256-v1:<hash>",
+  "rsi_seed_from": "2023-01-02",
+  "unavailable": []
+}
+```
 
 O calendário observado é lido junto às cotações no mesmo snapshot PostgreSQL
 somente leitura. Veja [a política de calendário](calendario-intelligence.md).
