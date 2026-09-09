@@ -22,17 +22,25 @@ services:
       mode: replicated
       replicas: ${API_REPLICAS:-1}
 
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.marketdata.rule: 'Host(`marketdata.techcomp.net.br`)'
+        traefik.http.routers.marketdata.entrypoints: "websecure"
+        traefik.http.routers.marketdata.tls: "true"
+        traefik.http.routers.marketdata.tls.certresolver: "letsencryptresolver"
+        traefik.http.services.marketdata.loadbalancer.server.port: "8080"
+        traefik.swarm.network: "DockerNet"
+
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+        monitor: 30s
+
       restart_policy:
         condition: on-failure
-
-      labels:
-        - "traefik.enable=true"
-        - 'traefik.http.routers.marketdata.rule=Host(marketdata.techcomp.net.br)'
-        - "traefik.http.routers.marketdata.entrypoints=websecure"
-        - "traefik.http.routers.marketdata.tls=true"
-        - "traefik.http.routers.marketdata.tls.certresolver=letsencryptresolver"
-        - "traefik.http.services.marketdata.loadbalancer.server.port=8080"
-        - "traefik.docker.network=DockerNet"
+        delay: 5s
+        max_attempts: 5
 
 
 networks:

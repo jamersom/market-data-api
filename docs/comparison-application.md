@@ -1,5 +1,16 @@
 # Camada de aplicação de comparações
 
+## Cálculos compartilhados
+
+O pacote `internal/domain/analytics` concentra funções puras para retorno,
+volatilidade anualizada, drawdown máximo e volume financeiro médio.
+`comparison_calculations.go` continua responsável pela validação e ordenação
+das cotações, seleção das métricas e montagem do resultado da comparação.
+As funções compartilhadas recebem séries já validadas; não consultam banco
+nem dependem dos DTOs HTTP. As convenções e o contrato de `/comparisons`
+permanecem os mesmos. O futuro endpoint de intelligence poderá reutilizar
+esse pacote, mas ainda não foi implementado.
+
 `services.NewCompareQuotesService(repository, logger)` implementa
 `inbound.CompareQuotesUseCase`. O caso de uso recebe `CompareQuotesInput` e
 retorna `CompareQuotesOutput`, sem depender de HTTP ou PostgreSQL.

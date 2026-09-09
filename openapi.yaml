@@ -1,11 +1,48 @@
 openapi: 3.1.0
 info:
   title: Market Data API
-  version: 1.2.0
+  version: 1.4.0
   description: Consulta cotações diárias não ajustadas publicadas pelo B3 Data Hub.
 servers:
   - url: /
 paths:
+  /assets/{ticker}/intelligence:
+    get:
+      operationId: getAssetIntelligence
+      summary: Retorna indicadores determinísticos de um ativo
+      description: >-
+        Consulta somente leitura com timeout de cinco segundos. Rejeita parâmetros
+        desconhecidos, repetidos ou vazios. asOf limita a data de pregão usando a
+        versão atualmente publicada dos dados, não a versão conhecida no passado.
+        Sem asOf usa a última cotação até hoje em São Paulo. A referência efetiva
+        pode anteceder a solicitada. Preços não ajustados. Janelas d são pregões.
+        Usa calendário observado consolidado do COTAHIST, com integridade de cada
+        importação validada e origem/versão em meta.calendar. Não equivale a um
+        calendário oficial independente: omissões globais na fonte não são detectadas.
+        Anos ausentes ou cobertura inválida indisponibilizam somente as janelas afetadas.
+        Sessões são limitadas à última cotação até asOf. Benchmark não é aceito nesta versão.
+        Retorna somente indicadores implementados. Status complete significa que todos foram calculados; caso contrário, partial.
+      parameters:
+        - $ref: '#/components/parameters/Ticker'
+        - $ref: '#/components/parameters/MarketType'
+        - name: includeDetails
+          in: query
+          description: Inclui a cobertura anual detalhada em meta.calendar.coverage.
+          schema: { type: boolean, default: false }
+        - name: asOf
+          in: query
+          description: Data civil não futura e diferente de 0001-01-01.
+          schema: { type: string, format: date, example: '2026-09-04' }
+      responses:
+        '200':
+          description: Análise completa ou parcial; null representa indisponibilidade, nunca zero.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntelligenceEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '504': { $ref: '#/components/responses/RequestTimeout' }
   /comparisons:
     get:
       operationId: compareQuotesGet
@@ -149,6 +186,98 @@ components:
       description: Código do tipo de mercado B3; 10 representa mercado à vista.
       schema: { type: integer, minimum: 1, default: 10 }
   schemas:
+    IntelligenceNumber:
+      type: [number, 'null']
+      description: Arredondado a duas casas; percentuais usam 20 para 20%. RSI usa escala 0 a 100.
+    IntelligenceMoney:
+      type: [string, 'null']
+      pattern: '^-?[0-9]+\.[0-9]{2}$'
+      description: Valor monetário em reais com duas casas decimais.
+    IntelligenceEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          required: [ticker, price, returns, trend, momentum, risk, liquidity]
+          properties:
+            ticker: { type: string, example: PETR4 }
+            price:
+              type: object
+              required: [close, currency]
+              properties:
+                close: { $ref: '#/components/schemas/IntelligenceMoney' }
+                currency: { type: string, const: BRL }
+            returns:
+              type: object
+              required: [return_7d]
+              properties:
+                return_7d: { $ref: '#/components/schemas/IntelligenceNumber', description: Retorno de sete pregões; exige oito fechamentos. }
+            trend:
+              type: object
+              required: [sma20, distance_sma20]
+              properties:
+                sma20: { $ref: '#/components/schemas/IntelligenceMoney', description: Média de vinte fechamentos; arredondada apenas na saída. }
+                distance_sma20: { $ref: '#/components/schemas/IntelligenceNumber', description: Distância percentual da média não arredondada. }
+            momentum:
+              type: object
+              required: [rsi14]
+              properties:
+                rsi14: { $ref: '#/components/schemas/IntelligenceNumber', description: Wilder com semente nos primeiros quinze fechamentos publicados. }
+            risk:
+              type: object
+              required: [volatility_30d, drawdown_current, maximum_drawdown_252d]
+              properties:
+                volatility_30d: { $ref: '#/components/schemas/IntelligenceNumber', description: Desvio amostral de trinta retornos simples anualizado por sqrt(252). }
+                drawdown_current: { $ref: '#/components/schemas/IntelligenceNumber', description: Último fechamento contra o pico dos últimos 252 pregões. }
+                maximum_drawdown_252d: { $ref: '#/components/schemas/IntelligenceNumber', description: Pior drawdown na janela de 252 pregões. }
+            liquidity:
+              type: object
+              required: [average_daily_volume_20d]
+              properties:
+                average_daily_volume_20d: { $ref: '#/components/schemas/IntelligenceMoney', description: Volume financeiro médio de vinte pregões; fração de centavo truncada. }
+        meta:
+          type: object
+          required: [calendar, status, market_type, requested_as_of, as_of, source, price_adjustment, window_unit, percentage_unit, calculation_version, data_version, rsi_seed_from, unavailable]
+          properties:
+            calendar:
+              type: object
+              required: [source, version, policy, official_verified]
+              properties:
+                source: { type: string, example: cotahist_observed }
+                version: { type: string, description: Hash da política, mercado, intervalo, cobertura e sessões. }
+                policy: { type: string, example: observed_import_integrity_v1 }
+                official_verified: { type: boolean, example: false }
+                coverage:
+                  type: array
+                  items:
+                    type: object
+                    required: [year, observed_from, observed_to, import_integrity_validated, version]
+                    properties:
+                      year: { type: integer }
+                      observed_from: { type: string, format: date }
+                      observed_to: { type: string, format: date, description: Limite publicado do ano; pode ser posterior a asOf, mas sessões posteriores não são usadas. }
+                      import_integrity_validated: { type: boolean }
+                      version: { type: string }
+            status: { type: string, enum: [complete, partial] }
+            market_type: { type: integer, minimum: 1 }
+            requested_as_of: { type: [string, 'null'], format: date }
+            as_of: { type: string, format: date }
+            source: { type: string, const: B3 COTAHIST }
+            price_adjustment: { type: string, const: unadjusted }
+            window_unit: { type: string, const: trading_sessions }
+            percentage_unit: { type: string, const: percent }
+            calculation_version: { type: string, example: '1.0' }
+            data_version: { type: string, description: Hash do histórico e seus metadados; não inclui calendário. }
+            rsi_seed_from: { type: string, format: date }
+            unavailable:
+              type: array
+              items:
+                type: object
+                required: [field, reason]
+                properties:
+                  field: { type: string, example: momentum.rsi14 }
+                  reason: { type: string, enum: [insufficient_history, calendar_unavailable, calendar_missing_year, calendar_invalid_coverage, calendar_outside_coverage, missing_sessions, invalid_data] }
     ComparisonMetrics:
       type: array
       description: Omissão ou lista JSON vazia aplica as métricas padrão; duplicidades são removidas.
