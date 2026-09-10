@@ -26,7 +26,19 @@ type IntelligenceTrend struct {
 	DistanceSMA20 *float64 `json:"distance_sma20"`
 }
 type IntelligenceMomentum struct {
-	RSI14 *float64 `json:"rsi14"`
+	RSI14         *float64                   `json:"rsi14"`
+	RSIPercentile *IntelligenceRSIPercentile `json:"rsi14_percentile"`
+}
+type IntelligenceRSIPercentile struct {
+	Value        float64                        `json:"value"`
+	Window       string                         `json:"window"`
+	Observations int                            `json:"observations"`
+	Coverage     IntelligencePercentileCoverage `json:"coverage"`
+}
+type IntelligencePercentileCoverage struct {
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Complete bool   `json:"complete"`
 }
 type IntelligenceRisk struct {
 	Volatility30D       *float64 `json:"volatility_30d"`

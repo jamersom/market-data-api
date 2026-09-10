@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -26,7 +27,7 @@ func (h *IntelligenceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for name, values := range query {
-		if name != "asOf" && name != "marketType" && name != "includeDetails" {
+		if name != "asOf" && name != "marketType" && name != "includeDetails" && name != "rsiWindow" {
 			writeError(w, domain.ValidationError{Field: name, Message: "unknown query parameter"})
 			return
 		}
@@ -36,6 +37,14 @@ func (h *IntelligenceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	input := inbound.GetAssetIntelligenceInput{Ticker: r.PathValue("ticker")}
+	if query.Has("rsiWindow") {
+		var years int
+		if _, err := fmt.Sscanf(query.Get("rsiWindow"), "%dy", &years); err != nil || years <= 0 || query.Get("rsiWindow") != strconv.Itoa(years)+"y" {
+			writeError(w, domain.ValidationError{Field: "rsiWindow", Message: "rsiWindow must use a positive number followed by y"})
+			return
+		}
+		input.WindowYears = years
+	}
 	includeDetails := false
 	if query.Has("includeDetails") {
 		switch query.Get("includeDetails") {

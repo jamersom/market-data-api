@@ -87,7 +87,23 @@ func TestRSIWilder(t *testing.T) {
 			if !slices.Equal(before, tc.closes) {
 				t.Fatal("input mutated")
 			}
+			history, ok := analytics.RSIHistory(tc.closes, tc.period)
+			if !ok || len(history) != len(tc.closes)-tc.period || math.Abs(history[len(history)-1]-got) > 1e-10 {
+				t.Fatalf("history does not preserve RSI: %v, %v", history, ok)
+			}
 		})
+	}
+}
+
+func TestPercentileMidrank(t *testing.T) {
+	got, ok := analytics.PercentileMidrank(20, []float64{10, 20, 20, 30})
+	if !ok || math.Abs(got-50) > 1e-10 {
+		t.Fatalf("got %g, %v; want 50, true", got, ok)
+	}
+	for _, observations := range [][]float64{nil, {10, math.NaN()}} {
+		if _, ok := analytics.PercentileMidrank(20, observations); ok {
+			t.Fatalf("accepted invalid observations: %v", observations)
+		}
 	}
 }
 

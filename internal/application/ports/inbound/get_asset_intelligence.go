@@ -8,14 +8,24 @@ import (
 )
 
 type GetAssetIntelligenceInput struct {
-	Ticker     string
-	AsOf       time.Time // Zero means the latest available quote, bounded by today.
-	MarketType int
+	Ticker      string
+	AsOf        time.Time // Zero means the latest available quote, bounded by today.
+	MarketType  int
+	WindowYears int
 }
 
 type IntelligenceUnavailable struct {
 	Field  string
 	Reason string
+}
+
+type RSIPercentile struct {
+	Value            float64
+	WindowYears      int
+	Observations     int
+	CoverageFrom     time.Time
+	CoverageTo       time.Time
+	CoverageComplete bool
 }
 
 // GetAssetIntelligenceOutput is an application result, not the HTTP DTO.
@@ -31,6 +41,7 @@ type GetAssetIntelligenceOutput struct {
 	SMA20Cents                 *float64
 	DistanceSMA20              *float64
 	RSI14                      *float64
+	RSIPercentile              *RSIPercentile
 	Volatility30D              *float64
 	DrawdownCurrent            *float64
 	MaximumDrawdown252D        *float64

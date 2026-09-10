@@ -12,16 +12,22 @@ import (
 	"github.com/jamersom/market-data-api/internal/domain"
 )
 
-type payloadStub struct{ calls int }
+type payloadStub struct {
+	calls int
+	input inbound.GetAssetIntelligenceInput
+}
 
 func (s *payloadStub) Execute(_ context.Context, input inbound.GetAssetIntelligenceInput) (inbound.GetAssetIntelligenceOutput, error) {
 	s.calls++
+	s.input = input
 	zero := 0.0
 	out := inbound.GetAssetIntelligenceOutput{Ticker: "PETR4", Status: "partial", Return7D: &zero,
 		AsOf: time.Date(2023, 12, 28, 0, 0, 0, 0, time.UTC),
 		Calendar: domain.IntelligenceCalendarMetadata{Source: "cotahist_observed", Version: "calendar-v1", Policy: "observed_import_integrity_v1",
 			Coverage: []domain.CalendarCoverage{{Year: 2023, From: time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC), To: time.Date(2023, 12, 28, 0, 0, 0, 0, time.UTC)}}},
-		CalculationVersion: "1.0", DataVersion: "data-v1", RSISeedFrom: time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC),
+		CalculationVersion: "1.1", DataVersion: "data-v1", RSISeedFrom: time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC),
+		RSIPercentile: &inbound.RSIPercentile{Value: 91.4, WindowYears: 5, Observations: 1034,
+			CoverageFrom: time.Date(2022, 7, 18, 0, 0, 0, 0, time.UTC), CoverageTo: time.Date(2023, 12, 27, 0, 0, 0, 0, time.UTC)},
 		Unavailable: []inbound.IntelligenceUnavailable{{Field: "momentum.rsi14", Reason: "insufficient_history"}}}
 	if !input.AsOf.IsZero() {
 		requested := input.AsOf
@@ -62,8 +68,13 @@ func TestIntelligenceCompactPayload(t *testing.T) {
 				}
 			}
 			momentum := data["momentum"].(map[string]any)
-			if _, ok := momentum["rsi14_percentile_3y"]; ok {
-				t.Fatal("percentile placeholder present")
+			percentile, ok := momentum["rsi14_percentile"].(map[string]any)
+			if !ok || percentile["window"] != "5y" || percentile["observations"] != float64(1034) {
+				t.Fatalf("percentile missing or invalid: %v", momentum["rsi14_percentile"])
+			}
+			coverage, ok := percentile["coverage"].(map[string]any)
+			if !ok || coverage["from"] != "2022-07-18" || coverage["to"] != "2023-12-27" || coverage["complete"] != false {
+				t.Fatalf("coverage missing or invalid: %v", percentile["coverage"])
 			}
 			if value, ok := momentum["rsi14"]; !ok || value != nil {
 				t.Fatal("unavailable metric must remain null")
@@ -93,6 +104,31 @@ func TestIntelligenceCompactPayload(t *testing.T) {
 				t.Fatalf("unexpected requested_as_of: %v", requested)
 			}
 		})
+	}
+}
+
+func TestIntelligenceRSIWindow(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		years int
+		code  int
+	}{
+		{"", 0, 200},
+		{"?rsiWindow=1y", 1, 200},
+		{"?rsiWindow=3y", 3, 200},
+		{"?rsiWindow=5y", 5, 200},
+		{"?rsiWindow=0y", 0, 400},
+		{"?rsiWindow=", 0, 400},
+		{"?rsiWindow=5", 0, 400},
+		{"?rsiWindow=05y", 0, 400},
+		{"?rsiWindow=1y&rsiWindow=3y", 0, 400},
+	} {
+		stub := &payloadStub{}
+		rec := httptest.NewRecorder()
+		NewIntelligenceHandler(stub).Get(rec, httptest.NewRequest("GET", "/assets/PETR4/intelligence"+tc.query, nil))
+		if rec.Code != tc.code || stub.input.WindowYears != tc.years {
+			t.Fatalf("query %q: HTTP %d, window %d", tc.query, rec.Code, stub.input.WindowYears)
+		}
 	}
 }
 

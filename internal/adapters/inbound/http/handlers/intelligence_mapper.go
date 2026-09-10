@@ -40,6 +40,18 @@ func IntelligenceResponse(out inbound.GetAssetIntelligenceOutput) response.Intel
 	}
 	d.Trend.DistanceSMA20 = metric("trend.distance_sma20", out.DistanceSMA20)
 	d.Momentum.RSI14 = metric("momentum.rsi14", out.RSI14)
+	if out.RSIPercentile != nil && !blocked["momentum.rsi14_percentile"] {
+		d.Momentum.RSIPercentile = &response.IntelligenceRSIPercentile{
+			Value:        round(out.RSIPercentile.Value),
+			Window:       fmt.Sprintf("%dy", out.RSIPercentile.WindowYears),
+			Observations: out.RSIPercentile.Observations,
+			Coverage: response.IntelligencePercentileCoverage{
+				From:     out.RSIPercentile.CoverageFrom.Format(time.DateOnly),
+				To:       out.RSIPercentile.CoverageTo.Format(time.DateOnly),
+				Complete: out.RSIPercentile.CoverageComplete,
+			},
+		}
+	}
 	d.Risk.Volatility30D = metric("risk.volatility_30d", out.Volatility30D)
 	d.Risk.DrawdownCurrent = metric("risk.drawdown_current", out.DrawdownCurrent)
 	d.Risk.MaximumDrawdown252D = metric("risk.maximum_drawdown_252d", out.MaximumDrawdown252D)

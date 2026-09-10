@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Market Data API
-  version: 1.4.0
+  version: 1.5.0
   description: Consulta cotações diárias não ajustadas publicadas pelo B3 Data Hub.
 servers:
   - url: /
@@ -20,7 +20,9 @@ paths:
         importação validada e origem/versão em meta.calendar quando includeDetails=true. Não equivale a um
         calendário oficial independente: omissões globais na fonte não são detectadas.
         Anos ausentes ou cobertura inválida indisponibilizam somente as janelas afetadas.
-        Sessões são limitadas à última cotação até asOf. Benchmark não é aceito nesta versão.
+        Sessões são limitadas à última cotação até asOf. O percentil histórico do RSI
+        usa anos civis, exclui o RSI da própria referência e exige 252 observações válidas.
+        Benchmark não é aceito nesta versão.
         Retorna somente indicadores implementados. Status complete significa que todos foram calculados; caso contrário, partial.
       parameters:
         - $ref: '#/components/parameters/Ticker'
@@ -29,6 +31,10 @@ paths:
           in: query
           description: Inclui meta.calendar, meta.calculation_version, meta.data_version e meta.rsi_seed_from.
           schema: { type: boolean, default: false }
+        - name: rsiWindow
+          in: query
+          description: Janela civil do percentil histórico do RSI(14), expressa como um número positivo de anos seguido por y.
+          schema: { type: string, pattern: '^[1-9][0-9]*y$', default: 3y, example: 5y }
         - name: asOf
           in: query
           description: Data civil não futura e diferente de 0001-01-01.
@@ -221,9 +227,24 @@ components:
                 distance_sma20: { $ref: '#/components/schemas/IntelligenceNumber', description: Distância percentual da média não arredondada. }
             momentum:
               type: object
-              required: [rsi14]
+              required: [rsi14, rsi14_percentile]
               properties:
                 rsi14: { $ref: '#/components/schemas/IntelligenceNumber', description: Wilder com semente nos primeiros quinze fechamentos publicados. }
+                rsi14_percentile:
+                  type: [object, 'null']
+                  description: Percentil midrank do RSI atual contra valores anteriores à referência. Null quando houver menos de 252 observações válidas.
+                  required: [value, window, observations, coverage]
+                  properties:
+                    value: { type: number, minimum: 0, maximum: 100, description: Arredondado a duas casas. }
+                    window: { type: string, pattern: '^[1-9][0-9]*y$', example: 5y, description: Janela civil solicitada. }
+                    observations: { type: integer, minimum: 252, example: 1034 }
+                    coverage:
+                      type: object
+                      required: [from, to, complete]
+                      properties:
+                        from: { type: string, format: date, example: '2022-07-18' }
+                        to: { type: string, format: date, example: '2026-09-08' }
+                        complete: { type: boolean, example: false, description: Indica se havia histórico válido suficiente para alcançar o início civil da janela solicitada. }
             risk:
               type: object
               required: [volatility_30d, drawdown_current, maximum_drawdown_252d]
@@ -268,7 +289,7 @@ components:
             price_adjustment: { type: string, const: unadjusted }
             window_unit: { type: string, const: trading_sessions }
             percentage_unit: { type: string, const: percent }
-            calculation_version: { type: string, example: '1.0', description: Presente somente quando includeDetails=true. }
+            calculation_version: { type: string, example: '1.1', description: Presente somente quando includeDetails=true. }
             data_version: { type: string, description: Presente somente quando includeDetails=true. Hash do histórico e seus metadados; não inclui calendário. }
             rsi_seed_from: { type: string, format: date, description: Presente somente quando includeDetails=true. }
             unavailable:
@@ -277,7 +298,7 @@ components:
                 type: object
                 required: [field, reason]
                 properties:
-                  field: { type: string, example: momentum.rsi14 }
+                  field: { type: string, example: momentum.rsi14_percentile }
                   reason: { type: string, enum: [insufficient_history, calendar_unavailable, calendar_missing_year, calendar_invalid_coverage, calendar_outside_coverage, missing_sessions, invalid_data] }
     ComparisonMetrics:
       type: array

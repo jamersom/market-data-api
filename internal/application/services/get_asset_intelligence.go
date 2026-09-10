@@ -20,6 +20,12 @@ type GetAssetIntelligenceService struct {
 	now    func() time.Time
 }
 
+const (
+	DefaultRSIPercentileWindowYears  = 3
+	MinimumRSIPercentileObservations = 252
+	rsiPeriod                        = 14
+)
+
 var _ inbound.GetAssetIntelligenceUseCase = (*GetAssetIntelligenceService)(nil)
 
 func NewGetAssetIntelligenceService(quotes outbound.IntelligenceQuoteRepository, logger *slog.Logger) *GetAssetIntelligenceService {
@@ -44,6 +50,13 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 	}
 	if market < 0 {
 		return output, domain.ValidationError{Field: "marketType", Message: "marketType must be positive", Err: domain.ErrInvalidMarketType}
+	}
+	windowYears := input.WindowYears
+	if windowYears == 0 {
+		windowYears = DefaultRSIPercentileWindowYears
+	}
+	if windowYears < 0 {
+		return output, domain.ValidationError{Field: "rsiWindow", Message: "rsiWindow must be a positive number of years"}
 	}
 	location, err := time.LoadLocation("America/Sao_Paulo")
 	if err != nil {
@@ -95,7 +108,7 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 	output.AsOf = output.Price.TradingDate
 	output.Source, output.PriceAdjustment = "B3 COTAHIST", "unadjusted"
 	output.WindowUnit, output.PercentageUnit = "trading_sessions", "percent"
-	output.CalculationVersion, output.DataVersion = "1.0", history.DataVersion
+	output.CalculationVersion, output.DataVersion = "1.1", history.DataVersion
 	output.RSISeedFrom = quotes[0].TradingDate
 	output.Calendar = history.Calendar
 	output.Calendar.OfficialVerified = history.CalendarVerified
@@ -167,10 +180,45 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 	output.Return7D = calculate("returns.return_7d", 8, func(v []int64) float64 { _, p := analytics.Return(v[0], v[7]); return p })
 	output.SMA20Cents = calculate("trend.sma20", 20, func(v []int64) float64 { p, _ := analytics.SMA(v, 20); return p })
 	output.DistanceSMA20 = calculate("trend.distance_sma20", 20, func(v []int64) float64 { p, _ := analytics.DistanceFromSMA(v, 20); return p })
-	if len(quotes) < 15 {
+	if len(quotes) < rsiPeriod+1 {
 		missing("momentum.rsi14", "insufficient_history")
+		missing("momentum.rsi14_percentile", "insufficient_history")
+	} else if closes, reason := window(len(quotes), false); reason != "" {
+		missing("momentum.rsi14", reason)
+		missing("momentum.rsi14_percentile", reason)
 	} else {
-		output.RSI14 = calculate("momentum.rsi14", len(quotes), func(v []int64) float64 { p, _ := analytics.RSI(v, 14); return p })
+		rsiHistory, _ := analytics.RSIHistory(closes, rsiPeriod)
+		currentRSI := rsiHistory[len(rsiHistory)-1]
+		output.RSI14 = &currentRSI
+		windowStart := output.AsOf.AddDate(-windowYears, 0, 0)
+		values := make([]float64, 0, len(rsiHistory)-1)
+		var coverageFrom, coverageTo time.Time
+		for i, value := range rsiHistory[:len(rsiHistory)-1] {
+			date := quotes[rsiPeriod+i].TradingDate
+			if date.Before(windowStart) {
+				continue
+			}
+			if coverageFrom.IsZero() {
+				coverageFrom = date
+			}
+			coverageTo = date
+			values = append(values, value)
+		}
+		if len(values) < MinimumRSIPercentileObservations {
+			missing("momentum.rsi14_percentile", "insufficient_history")
+		} else if value, ok := analytics.PercentileMidrank(*output.RSI14, values); ok {
+			firstValidRSIDate := quotes[rsiPeriod].TradingDate
+			output.RSIPercentile = &inbound.RSIPercentile{
+				Value:            value,
+				WindowYears:      windowYears,
+				Observations:     len(values),
+				CoverageFrom:     coverageFrom,
+				CoverageTo:       coverageTo,
+				CoverageComplete: !firstValidRSIDate.After(windowStart),
+			}
+		} else {
+			missing("momentum.rsi14_percentile", "invalid_data")
+		}
 	}
 	output.Volatility30D = calculate("risk.volatility_30d", 31, func(v []int64) float64 {
 		returns := make([]float64, 30)

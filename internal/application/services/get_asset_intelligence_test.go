@@ -62,7 +62,7 @@ func hasUnavailable(out inbound.GetAssetIntelligenceOutput, field, reason string
 }
 
 func TestIntelligenceCompleteCore(t *testing.T) {
-	r := intelligenceFixture(252)
+	r := intelligenceFixture(rsiPeriod + MinimumRSIPercentileObservations + 1)
 	out, err := intelligenceService(r).Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: " petr4 "})
 	if err != nil {
 		t.Fatal(err)
@@ -75,11 +75,105 @@ func TestIntelligenceCompleteCore(t *testing.T) {
 			t.Fatalf("%s = %v, want available zero", name, value)
 		}
 	}
-	if out.SMA20Cents == nil || *out.SMA20Cents != 10000 || out.RSI14 == nil || *out.RSI14 != 50 || out.AverageDailyVolume20DCents == nil || *out.AverageDailyVolume20DCents != 100000 {
+	if out.SMA20Cents == nil || *out.SMA20Cents != 10000 || out.RSI14 == nil || *out.RSI14 != 50 || out.RSIPercentile == nil || out.RSIPercentile.Value != 50 || out.AverageDailyVolume20DCents == nil || *out.AverageDailyVolume20DCents != 100000 {
 		t.Fatalf("metrics: %+v", out)
+	}
+	if out.RSIPercentile.WindowYears != DefaultRSIPercentileWindowYears {
+		t.Fatalf("default RSI window = %d", out.RSIPercentile.WindowYears)
 	}
 	if out.RequestedAsOf != nil || out.Status != "complete" || out.DataVersion != "fixture-v1" || out.PriceAdjustment != "unadjusted" || len(out.Unavailable) != 0 {
 		t.Fatalf("metadata: %+v", out)
+	}
+}
+
+func TestIntelligenceRSIPercentileWindowsAndCoverage(t *testing.T) {
+	start := time.Date(2020, 8, 1, 0, 0, 0, 0, time.UTC)
+	asOf := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	days := int(asOf.Sub(start).Hours()/24) + 1
+	r := intelligenceFixture(days)
+	for i := range r.history.Records {
+		date := start.AddDate(0, 0, i)
+		r.history.Records[i].Quote.TradingDate = date
+		r.history.Sessions[i] = date
+	}
+	service := intelligenceService(r)
+	service.now = func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) }
+
+	observations := map[int]int{}
+	for _, years := range []int{1, 3, 5} {
+		out, err := service.Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4", AsOf: asOf, WindowYears: years})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.RSIPercentile == nil || out.RSIPercentile.WindowYears != years || !out.RSIPercentile.CoverageComplete {
+			t.Fatalf("window %dy: %+v", years, out.RSIPercentile)
+		}
+		if out.RSIPercentile.CoverageTo != asOf.AddDate(0, 0, -1) {
+			t.Fatalf("window %dy included asOf: %+v", years, out.RSIPercentile)
+		}
+		observations[years] = out.RSIPercentile.Observations
+	}
+	if !(observations[1] < observations[3] && observations[3] < observations[5]) {
+		t.Fatalf("windows are not configurable: %+v", observations)
+	}
+}
+
+func TestIntelligenceRSIPercentilePartialCoverage(t *testing.T) {
+	r := intelligenceFixture(400)
+	out, err := intelligenceService(r).Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4", WindowYears: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.RSIPercentile == nil || out.RSIPercentile.CoverageComplete || out.RSIPercentile.Observations != 385 {
+		t.Fatalf("partial coverage: %+v", out.RSIPercentile)
+	}
+}
+
+func TestIntelligenceRSIPercentileMinimumObservations(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		records   int
+		available bool
+	}{
+		{"exact minimum", rsiPeriod + MinimumRSIPercentileObservations + 1, true},
+		{"below minimum", rsiPeriod + MinimumRSIPercentileObservations, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := intelligenceService(intelligenceFixture(tc.records)).Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4", WindowYears: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (out.RSIPercentile != nil) != tc.available {
+				t.Fatalf("percentile availability: %+v", out.RSIPercentile)
+			}
+			if tc.available && out.RSIPercentile.Observations != MinimumRSIPercentileObservations {
+				t.Fatalf("observations = %d", out.RSIPercentile.Observations)
+			}
+			if !tc.available && !hasUnavailable(out, "momentum.rsi14_percentile", "insufficient_history") {
+				t.Fatalf("unavailable: %+v", out.Unavailable)
+			}
+		})
+	}
+}
+
+func TestIntelligenceRSIPercentileHistoricalAsOfExcludesCurrent(t *testing.T) {
+	r := intelligenceFixture(500)
+	asOfIndex := 399
+	r.history.Records[asOfIndex].Quote.ClosePriceCents = 10100
+	out, err := intelligenceService(r).Execute(context.Background(), inbound.GetAssetIntelligenceInput{
+		Ticker: "PETR4", AsOf: r.history.Sessions[asOfIndex], WindowYears: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.AsOf != r.history.Sessions[asOfIndex] || out.RSIPercentile == nil {
+		t.Fatalf("historical percentile: %+v", out)
+	}
+	if out.RSIPercentile.Observations != asOfIndex-rsiPeriod || out.RSIPercentile.CoverageTo != r.history.Sessions[asOfIndex-1] {
+		t.Fatalf("current or future observation included: %+v", out.RSIPercentile)
+	}
+	if out.RSIPercentile.Value != 100 {
+		t.Fatalf("percentile = %v, want 100", out.RSIPercentile.Value)
 	}
 }
 
@@ -156,11 +250,12 @@ func TestIntelligenceErrors(t *testing.T) {
 	}{
 		{inbound.GetAssetIntelligenceInput{Ticker: "!"}, domain.ErrInvalidTicker},
 		{inbound.GetAssetIntelligenceInput{Ticker: "PETR4", MarketType: -1}, domain.ErrInvalidMarketType},
+		{inbound.GetAssetIntelligenceInput{Ticker: "PETR4", WindowYears: -1}, nil},
 		{inbound.GetAssetIntelligenceInput{Ticker: "PETR4", AsOf: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)}, domain.ErrInvalidDateRange},
 	} {
 		r := intelligenceFixture(31)
 		_, err := intelligenceService(r).Execute(context.Background(), tc.input)
-		if !errors.Is(err, tc.want) || r.calls != 0 {
+		if (tc.want != nil && !errors.Is(err, tc.want)) || (tc.want == nil && err == nil) || r.calls != 0 {
 			t.Fatalf("error %v, calls %d", err, r.calls)
 		}
 	}
