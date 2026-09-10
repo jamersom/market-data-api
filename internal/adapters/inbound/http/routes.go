@@ -37,11 +37,13 @@ func RegisterRoutes(
 	quoteHandler *handlers.QuoteHandler,
 	quoteHistoryHandler *handlers.QuoteHistoryHandler,
 	comparisonsHandler *handlers.ComparisonsHandler,
+	handler *handlers.IntelligenceHandler,
 ) {
 	mux.HandleFunc("GET /comparisons", comparisonsHandler.Get)
 	mux.HandleFunc("POST /comparisons", comparisonsHandler.Post)
 	mux.HandleFunc("GET /quotes/{ticker}", quoteHandler.Get)
 	mux.HandleFunc("GET /quotes/{ticker}/history", quoteHistoryHandler.Get)
+	mux.HandleFunc("GET /assets/{ticker}/intelligence", handler.Get)
 	mux.HandleFunc("GET /openapi.yaml", serveOpenAPI)
 	mux.HandleFunc("GET /docs", redirectToDocs)
 	mux.HandleFunc("GET /docs/", serveSwaggerUI)

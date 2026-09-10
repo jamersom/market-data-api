@@ -2,11 +2,11 @@ package services
 
 import (
 	"math"
-	"math/big"
 	"sort"
 	"time"
 
 	"github.com/jamersom/market-data-api/internal/domain"
+	"github.com/jamersom/market-data-api/internal/domain/analytics"
 )
 
 // A correlação alinha as datas inicial e final de cada intervalo de retorno,
@@ -43,27 +43,21 @@ func compareAsset(ticker string, records []domain.QuoteRecord, metrics map[domai
 	asset.InitialPriceCents, asset.FinalPriceCents = &first.ClosePriceCents, &last.ClosePriceCents
 	daily := make(map[returnInterval]float64, len(quotes)-1)
 	values := make([]float64, 0, len(quotes)-1)
-	peak, drawdown := first.ClosePriceCents, 0.0
+	closes := make([]int64, len(quotes))
+	volumes := make([]int64, len(quotes))
 	low, high := first.LowPriceCents, first.HighPriceCents
-	volume := new(big.Int)
 	var best, worst *domain.DailyPerformance
 	if includeSeries {
 		asset.Series = make([]domain.ComparisonPoint, 0, len(quotes))
 	}
 	for i, quote := range quotes {
-		volume.Add(volume, big.NewInt(quote.TradedVolumeCents))
+		closes[i] = quote.ClosePriceCents
+		volumes[i] = quote.TradedVolumeCents
 		if quote.LowPriceCents < low {
 			low = quote.LowPriceCents
 		}
 		if quote.HighPriceCents > high {
 			high = quote.HighPriceCents
-		}
-		if quote.ClosePriceCents > peak {
-			peak = quote.ClosePriceCents
-		}
-		dd := (float64(quote.ClosePriceCents)/float64(peak) - 1) * 100
-		if dd < drawdown {
-			drawdown = dd
 		}
 		if includeSeries {
 			asset.Series = append(asset.Series, domain.ComparisonPoint{Date: quote.TradingDate, ClosePriceCents: quote.ClosePriceCents, NormalizedPerformance: float64(quote.ClosePriceCents) / float64(first.ClosePriceCents) * 100})
@@ -83,20 +77,20 @@ func compareAsset(ticker string, records []domain.QuoteRecord, metrics map[domai
 		}
 	}
 	if metrics[domain.ComparisonMetricReturn] {
-		absolute := last.ClosePriceCents - first.ClosePriceCents
-		percentage := (float64(last.ClosePriceCents)/float64(first.ClosePriceCents) - 1) * 100
+		absolute, percentage := analytics.Return(first.ClosePriceCents, last.ClosePriceCents)
 		asset.AbsoluteReturnCents, asset.PercentageReturn = &absolute, &percentage
 	}
-	if metrics[domain.ComparisonMetricVolatility] && len(values) >= 2 {
-		_, sumSquares := moments(values)
-		volatility := math.Sqrt(sumSquares/float64(len(values)-1)) * math.Sqrt(252) * 100
-		asset.AnnualizedVolatility = &volatility
+	if metrics[domain.ComparisonMetricVolatility] {
+		if volatility, ok := analytics.AnnualizedVolatility(values); ok {
+			asset.AnnualizedVolatility = &volatility
+		}
 	}
 	if metrics[domain.ComparisonMetricDrawdown] {
+		drawdown, _ := analytics.MaximumDrawdown(closes)
 		asset.MaximumDrawdown = &drawdown
 	}
 	if metrics[domain.ComparisonMetricAverageVolume] {
-		average := volume.Quo(volume, big.NewInt(int64(len(quotes)))).Int64()
+		average, _ := analytics.AverageVolume(volumes)
 		asset.AverageDailyVolumeCents = &average
 	}
 	if metrics[domain.ComparisonMetricHighLow] {
