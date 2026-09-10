@@ -14,6 +14,7 @@ import (
 	"github.com/jamersom/market-data-api/internal/application/ports/outbound"
 	"github.com/jamersom/market-data-api/internal/domain"
 	"github.com/jamersom/market-data-api/internal/domain/analytics"
+	"github.com/jamersom/market-data-api/internal/domain/signals"
 )
 
 type GetAssetIntelligenceService struct {
@@ -197,6 +198,7 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 	}
 	output.Return7D = calculate("returns.return_7d", 8, func(v []int64) float64 { _, p := analytics.Return(v[0], v[7]); return p })
 	output.SMA20Cents = calculate("trend.sma20", 20, func(v []int64) float64 { p, _ := analytics.SMA(v, 20); return p })
+	output.SMA50Cents = calculate("trend.sma50", 50, func(v []int64) float64 { p, _ := analytics.SMA(v, 50); return p })
 	output.DistanceSMA20 = calculate("trend.distance_sma20", 20, func(v []int64) float64 { p, _ := analytics.DistanceFromSMA(v, 20); return p })
 	if len(quotes) < rsiPeriod+1 {
 		missing("momentum.rsi14", "insufficient_history")
@@ -257,6 +259,19 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 	if output.Price.ClosePriceCents <= 0 {
 		missing("price.close", "invalid_data")
 	}
+	rulesEvaluator := signals.NewEvaluator(signals.RulesetV1())
+	output.RulesetVersion = rulesEvaluator.Version()
+	var priceCents *float64
+	if output.Price.ClosePriceCents > 0 {
+		value := float64(output.Price.ClosePriceCents)
+		priceCents = &value
+	}
+	output.Signals = rulesEvaluator.Evaluate(signals.Indicators{
+		PriceCents: priceCents,
+		RSI14:      output.RSI14,
+		SMA20Cents: output.SMA20Cents,
+		SMA50Cents: output.SMA50Cents,
+	})
 	if benchmark != "" {
 		output.Benchmark = &inbound.IntelligenceBenchmark{Ticker: benchmark}
 		benchmarkHistory := histories[benchmark]

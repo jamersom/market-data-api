@@ -92,6 +92,7 @@ func (h *IntelligenceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if !includeDetails {
 		result.Meta.Calendar = nil
 		result.Meta.CalculationVersion = ""
+		result.Meta.RulesetVersion = ""
 		result.Meta.DataVersion = ""
 		result.Meta.RSISeedFrom = ""
 	}

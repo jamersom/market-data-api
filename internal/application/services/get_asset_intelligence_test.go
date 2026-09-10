@@ -11,6 +11,7 @@ import (
 	"github.com/jamersom/market-data-api/internal/application/ports/inbound"
 	"github.com/jamersom/market-data-api/internal/application/ports/outbound"
 	"github.com/jamersom/market-data-api/internal/domain"
+	"github.com/jamersom/market-data-api/internal/domain/signals"
 )
 
 type intelligenceRepositoryStub struct {
@@ -84,6 +85,15 @@ func hasUnavailable(out inbound.GetAssetIntelligenceOutput, field, reason string
 	return false
 }
 
+func signalByID(out inbound.GetAssetIntelligenceOutput, id string) signals.Evaluation {
+	for _, evaluation := range out.Signals {
+		if evaluation.ID == id {
+			return evaluation
+		}
+	}
+	return signals.Evaluation{}
+}
+
 func TestIntelligenceCompleteCore(t *testing.T) {
 	r := intelligenceFixture(rsiPeriod + MinimumRSIPercentileObservations + 1)
 	out, err := intelligenceService(r).Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: " petr4 "})
@@ -98,14 +108,17 @@ func TestIntelligenceCompleteCore(t *testing.T) {
 			t.Fatalf("%s = %v, want available zero", name, value)
 		}
 	}
-	if out.SMA20Cents == nil || *out.SMA20Cents != 10000 || out.RSI14 == nil || *out.RSI14 != 50 || out.RSIPercentile == nil || out.RSIPercentile.Value != 50 || out.AverageDailyVolume20DCents == nil || *out.AverageDailyVolume20DCents != 100000 {
+	if out.SMA20Cents == nil || *out.SMA20Cents != 10000 || out.SMA50Cents == nil || *out.SMA50Cents != 10000 || out.RSI14 == nil || *out.RSI14 != 50 || out.RSIPercentile == nil || out.RSIPercentile.Value != 50 || out.AverageDailyVolume20DCents == nil || *out.AverageDailyVolume20DCents != 100000 {
 		t.Fatalf("metrics: %+v", out)
 	}
 	if out.RSIPercentile.WindowYears != DefaultRSIPercentileWindowYears {
 		t.Fatalf("default RSI window = %d", out.RSIPercentile.WindowYears)
 	}
-	if out.RequestedAsOf != nil || out.Status != "complete" || out.DataVersion != "fixture-v1" || out.CalculationVersion != "1.2" || out.PriceAdjustment != "unadjusted" || len(out.Unavailable) != 0 {
+	if out.RequestedAsOf != nil || out.Status != "complete" || out.DataVersion != "fixture-v1" || out.CalculationVersion != "1.2" || out.RulesetVersion != signals.RulesetV1Version || out.PriceAdjustment != "unadjusted" || len(out.Unavailable) != 0 {
 		t.Fatalf("metadata: %+v", out)
+	}
+	if len(out.Signals) != 6 || signalByID(out, "rsi_overbought").Status != signals.StatusNotTriggered || signalByID(out, "sma20_above_sma50").Status != signals.StatusNotTriggered {
+		t.Fatalf("signals: %+v", out.Signals)
 	}
 }
 
@@ -304,6 +317,9 @@ func TestIntelligenceAsOfAndNoMutation(t *testing.T) {
 	if out.AsOf != date || out.RequestedAsOf == nil || *out.RequestedAsOf != date || out.Price.ClosePriceCents != 10000 || out.Return7D == nil || *out.Return7D != 0 {
 		t.Fatalf("future data leaked: %+v", out)
 	}
+	if signalByID(out, "price_above_sma20").Status != signals.StatusNotTriggered || signalByID(out, "price_below_sma20").Status != signals.StatusNotTriggered {
+		t.Fatalf("signals used data after asOf: %+v", out.Signals)
+	}
 	if !reflect.DeepEqual(before, r.history.Records) {
 		t.Fatal("repository history mutated")
 	}
@@ -318,7 +334,7 @@ func TestIntelligenceHistoryBoundaries(t *testing.T) {
 		for _, tc := range []struct {
 			value *float64
 			min   int
-		}{{out.Return7D, 8}, {out.SMA20Cents, 20}, {out.DistanceSMA20, 20}, {out.RSI14, 15}, {out.Volatility30D, 31}, {out.DrawdownCurrent, 252}, {out.MaximumDrawdown252D, 252}} {
+		}{{out.Return7D, 8}, {out.SMA20Cents, 20}, {out.SMA50Cents, 50}, {out.DistanceSMA20, 20}, {out.RSI14, 15}, {out.Volatility30D, 31}, {out.DrawdownCurrent, 252}, {out.MaximumDrawdown252D, 252}} {
 			if (tc.value != nil) != (n >= tc.min) {
 				t.Fatalf("history %d: minimum %d, value %v", n, tc.min, tc.value)
 			}

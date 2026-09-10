@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jamersom/market-data-api/internal/domain"
+	"github.com/jamersom/market-data-api/internal/domain/signals"
 )
 
 type GetAssetIntelligenceInput struct {
@@ -47,6 +48,7 @@ type GetAssetIntelligenceOutput struct {
 	Price                      domain.Quote
 	Return7D                   *float64
 	SMA20Cents                 *float64
+	SMA50Cents                 *float64
 	DistanceSMA20              *float64
 	RSI14                      *float64
 	RSIPercentile              *RSIPercentile
@@ -54,12 +56,14 @@ type GetAssetIntelligenceOutput struct {
 	DrawdownCurrent            *float64
 	MaximumDrawdown252D        *float64
 	AverageDailyVolume20DCents *int64
+	Signals                    []signals.Evaluation
 	Status                     string
 	Source                     string
 	PriceAdjustment            string
 	WindowUnit                 string
 	PercentageUnit             string
 	CalculationVersion         string
+	RulesetVersion             string
 	DataVersion                string
 	RSISeedFrom                time.Time
 	Unavailable                []IntelligenceUnavailable

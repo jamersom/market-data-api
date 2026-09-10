@@ -38,6 +38,10 @@ func IntelligenceResponse(out inbound.GetAssetIntelligenceOutput) response.Intel
 		v := fmt.Sprintf("%.2f", *out.SMA20Cents/100)
 		d.Trend.SMA20 = &v
 	}
+	if out.SMA50Cents != nil && !blocked["trend.sma50"] {
+		v := fmt.Sprintf("%.2f", *out.SMA50Cents/100)
+		d.Trend.SMA50 = &v
+	}
 	d.Trend.DistanceSMA20 = metric("trend.distance_sma20", out.DistanceSMA20)
 	d.Momentum.RSI14 = metric("momentum.rsi14", out.RSI14)
 	if out.RSIPercentile != nil && !blocked["momentum.rsi14_percentile"] {
@@ -64,6 +68,20 @@ func IntelligenceResponse(out inbound.GetAssetIntelligenceOutput) response.Intel
 		d.Benchmark.Returns.Return7D = metric("benchmark.returns.return_7d", out.Benchmark.Return7D)
 		d.Benchmark.RelativeStrength.Return7DPP = metric("benchmark.relative_strength.return_7d_pp", out.Benchmark.RelativeStrengthReturn7DPP)
 	}
+	d.Signals = make([]response.IntelligenceSignal, 0, len(out.Signals))
+	for _, evaluation := range out.Signals {
+		signal := response.IntelligenceSignal{ID: evaluation.ID, Status: string(evaluation.Status), Severity: string(evaluation.Severity)}
+		if evidence := evaluation.Evidence; evidence != nil {
+			signal.Evidence = &response.IntelligenceSignalEvidence{
+				RSI14:     evidence.RSI14,
+				Threshold: evidence.Threshold,
+				Price:     centsToUnits(evidence.PriceCents),
+				SMA20:     centsToUnits(evidence.SMA20Cents),
+				SMA50:     centsToUnits(evidence.SMA50Cents),
+			}
+		}
+		d.Signals = append(d.Signals, signal)
+	}
 	m := &result.Meta
 	m.Calendar = &response.IntelligenceCalendar{Source: out.Calendar.Source, Version: out.Calendar.Version, Policy: out.Calendar.Policy, OfficialVerified: out.Calendar.OfficialVerified, Coverage: []response.IntelligenceCalendarCoverage{}}
 	for _, c := range out.Calendar.Coverage {
@@ -77,7 +95,15 @@ func IntelligenceResponse(out inbound.GetAssetIntelligenceOutput) response.Intel
 	}
 	m.Source, m.PriceAdjustment = out.Source, out.PriceAdjustment
 	m.WindowUnit, m.PercentageUnit = out.WindowUnit, out.PercentageUnit
-	m.CalculationVersion, m.DataVersion = out.CalculationVersion, out.DataVersion
+	m.CalculationVersion, m.DataVersion, m.RulesetVersion = out.CalculationVersion, out.DataVersion, out.RulesetVersion
 	m.RSISeedFrom = out.RSISeedFrom.Format(time.DateOnly)
 	return result
+}
+
+func centsToUnits(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	converted := *value / 100
+	return &converted
 }
