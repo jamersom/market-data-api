@@ -63,9 +63,12 @@ func run(appLogger *slog.Logger) error {
 	quoteHistoryHandler := handlers.NewQuoteHistoryHandler(getQuotesByPeriodService)
 	compareQuotesService := services.NewCompareQuotesService(quoteRepository, appLogger)
 	comparisonsHandler := handlers.NewComparisonsHandler(compareQuotesService)
+	intelligenceRepository := postgres.NewObservedIntelligenceQuoteRepository(db)
+	intelligenceService := services.NewGetAssetIntelligenceService(intelligenceRepository, appLogger)
+	intelligenceHandle := handlers.NewIntelligenceHandler(intelligenceService)
 
 	mux := http.NewServeMux()
-	httpadapter.RegisterRoutes(mux, quoteHandler, quoteHistoryHandler, comparisonsHandler)
+	httpadapter.RegisterRoutes(mux, quoteHandler, quoteHistoryHandler, comparisonsHandler, intelligenceHandle)
 
 	server := &http.Server{
 		Addr:              serverAddress(),
