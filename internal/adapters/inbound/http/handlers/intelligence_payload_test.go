@@ -9,12 +9,20 @@ import (
 	"time"
 
 	"github.com/jamersom/market-data-api/internal/application/ports/inbound"
+	"github.com/jamersom/market-data-api/internal/application/ports/outbound"
+	"github.com/jamersom/market-data-api/internal/application/services"
 	"github.com/jamersom/market-data-api/internal/domain"
 )
 
 type payloadStub struct {
 	calls int
 	input inbound.GetAssetIntelligenceInput
+}
+
+type unusedIntelligenceRepository struct{}
+
+func (unusedIntelligenceRepository) FindIntelligenceHistories(context.Context, []string, int, time.Time) (map[string]outbound.IntelligenceHistory, error) {
+	panic("repository must not be called for invalid benchmark")
 }
 
 func (s *payloadStub) Execute(_ context.Context, input inbound.GetAssetIntelligenceInput) (inbound.GetAssetIntelligenceOutput, error) {
@@ -25,7 +33,7 @@ func (s *payloadStub) Execute(_ context.Context, input inbound.GetAssetIntellige
 		AsOf: time.Date(2023, 12, 28, 0, 0, 0, 0, time.UTC),
 		Calendar: domain.IntelligenceCalendarMetadata{Source: "cotahist_observed", Version: "calendar-v1", Policy: "observed_import_integrity_v1",
 			Coverage: []domain.CalendarCoverage{{Year: 2023, From: time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC), To: time.Date(2023, 12, 28, 0, 0, 0, 0, time.UTC)}}},
-		CalculationVersion: "1.1", DataVersion: "data-v1", RSISeedFrom: time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC),
+		CalculationVersion: "1.2", DataVersion: "data-v1", RSISeedFrom: time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC),
 		RSIPercentile: &inbound.RSIPercentile{Value: 91.4, WindowYears: 5, Observations: 1034,
 			CoverageFrom: time.Date(2022, 7, 18, 0, 0, 0, 0, time.UTC), CoverageTo: time.Date(2023, 12, 27, 0, 0, 0, 0, time.UTC)},
 		Unavailable: []inbound.IntelligenceUnavailable{{Field: "momentum.rsi14", Reason: "insufficient_history"}}}
@@ -33,7 +41,79 @@ func (s *payloadStub) Execute(_ context.Context, input inbound.GetAssetIntellige
 		requested := input.AsOf
 		out.RequestedAsOf = &requested
 	}
+	if input.Benchmark != "" {
+		out.Benchmark = &inbound.IntelligenceBenchmark{Ticker: input.Benchmark}
+		if input.Benchmark == "NONE" {
+			out.Unavailable = append(out.Unavailable,
+				inbound.IntelligenceUnavailable{Field: "benchmark.returns.return_7d", Reason: "benchmark_not_found"},
+				inbound.IntelligenceUnavailable{Field: "benchmark.relative_strength.return_7d_pp", Reason: "benchmark_not_found"},
+			)
+		} else {
+			benchmarkReturn, relativeStrength := 7.2, 5.3
+			out.Benchmark.Ticker = "IBOV"
+			out.Benchmark.Return7D = &benchmarkReturn
+			out.Benchmark.RelativeStrengthReturn7DPP = &relativeStrength
+		}
+	}
 	return out, nil
+}
+
+func TestIntelligenceUnavailableBenchmarkPayload(t *testing.T) {
+	stub := &payloadStub{}
+	rec := httptest.NewRecorder()
+	NewIntelligenceHandler(stub).Get(rec, httptest.NewRequest("GET", "/assets/PETR4/intelligence?benchmark=NONE", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("HTTP %d", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	benchmark := body["data"].(map[string]any)["benchmark"].(map[string]any)
+	if benchmark["returns"].(map[string]any)["return_7d"] != nil || benchmark["relative_strength"].(map[string]any)["return_7d_pp"] != nil {
+		t.Fatalf("unavailable benchmark values: %+v", benchmark)
+	}
+	unavailable := body["meta"].(map[string]any)["unavailable"].([]any)
+	if len(unavailable) != 3 {
+		t.Fatalf("unavailable entries: %+v", unavailable)
+	}
+}
+
+func TestIntelligenceBenchmarkPayload(t *testing.T) {
+	stub := &payloadStub{}
+	rec := httptest.NewRecorder()
+	NewIntelligenceHandler(stub).Get(rec, httptest.NewRequest("GET", "/assets/PETR4/intelligence?benchmark=IBOV", nil))
+	if rec.Code != http.StatusOK || stub.input.Benchmark != "IBOV" {
+		t.Fatalf("HTTP %d, input %+v", rec.Code, stub.input)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	benchmark := body["data"].(map[string]any)["benchmark"].(map[string]any)
+	if benchmark["ticker"] != "IBOV" || benchmark["returns"].(map[string]any)["return_7d"] != 7.2 || benchmark["relative_strength"].(map[string]any)["return_7d_pp"] != 5.3 {
+		t.Fatalf("benchmark payload: %+v", benchmark)
+	}
+}
+
+func TestIntelligenceBenchmarkValidation(t *testing.T) {
+	for _, query := range []string{"?benchmark=", "?benchmark=IBOV&benchmark=BOVA11"} {
+		stub := &payloadStub{}
+		rec := httptest.NewRecorder()
+		NewIntelligenceHandler(stub).Get(rec, httptest.NewRequest("GET", "/assets/PETR4/intelligence"+query, nil))
+		if rec.Code != http.StatusBadRequest || stub.calls != 0 {
+			t.Fatalf("invalid benchmark accepted: %s", query)
+		}
+	}
+}
+
+func TestIntelligenceRejectsBenchmarkEqualToAsset(t *testing.T) {
+	handler := NewIntelligenceHandler(services.NewGetAssetIntelligenceService(unusedIntelligenceRepository{}, nil))
+	rec := httptest.NewRecorder()
+	handler.Get(rec, httptest.NewRequest("GET", "/assets/PETR4/intelligence?benchmark=petr4", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("HTTP %d, want 400", rec.Code)
+	}
 }
 
 func TestIntelligenceCompactPayload(t *testing.T) {

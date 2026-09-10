@@ -27,7 +27,7 @@ func (h *IntelligenceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for name, values := range query {
-		if name != "asOf" && name != "marketType" && name != "includeDetails" && name != "rsiWindow" {
+		if name != "asOf" && name != "marketType" && name != "includeDetails" && name != "rsiWindow" && name != "benchmark" {
 			writeError(w, domain.ValidationError{Field: name, Message: "unknown query parameter"})
 			return
 		}
@@ -37,6 +37,13 @@ func (h *IntelligenceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	input := inbound.GetAssetIntelligenceInput{Ticker: r.PathValue("ticker")}
+	if query.Has("benchmark") {
+		if query.Get("benchmark") == "" {
+			writeError(w, domain.ValidationError{Field: "benchmark", Message: "benchmark must not be empty", Err: domain.ErrInvalidTicker})
+			return
+		}
+		input.Benchmark = query.Get("benchmark")
+	}
 	if query.Has("rsiWindow") {
 		var years int
 		if _, err := fmt.Sscanf(query.Get("rsiWindow"), "%dy", &years); err != nil || years <= 0 || query.Get("rsiWindow") != strconv.Itoa(years)+"y" {

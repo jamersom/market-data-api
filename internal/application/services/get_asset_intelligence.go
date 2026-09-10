@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -24,6 +26,7 @@ const (
 	DefaultRSIPercentileWindowYears  = 3
 	MinimumRSIPercentileObservations = 252
 	rsiPeriod                        = 14
+	return7DPeriods                  = 7
 )
 
 var _ inbound.GetAssetIntelligenceUseCase = (*GetAssetIntelligenceService)(nil)
@@ -43,6 +46,16 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 	ticker, err := domain.NormalizeTicker(input.Ticker)
 	if err != nil {
 		return output, err
+	}
+	benchmark := ""
+	if input.Benchmark != "" {
+		benchmark, err = domain.NormalizeTicker(input.Benchmark)
+		if err != nil {
+			return output, domain.ValidationError{Field: "benchmark", Value: input.Benchmark, Message: "benchmark must be a valid ticker", Err: domain.ErrInvalidTicker}
+		}
+		if benchmark == ticker {
+			return output, domain.ValidationError{Field: "benchmark", Value: benchmark, Message: "benchmark must differ from ticker", Err: domain.ErrInvalidTicker}
+		}
 	}
 	market := input.MarketType
 	if market == 0 {
@@ -72,10 +85,15 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 		output.RequestedAsOf = &cutoff
 	}
 	started := time.Now()
-	history, err := s.quotes.FindIntelligenceHistory(ctx, ticker, market, cutoff)
+	tickers := []string{ticker}
+	if benchmark != "" {
+		tickers = append(tickers, benchmark)
+	}
+	histories, err := s.quotes.FindIntelligenceHistories(ctx, tickers, market, cutoff)
 	if err != nil {
 		return output, fmt.Errorf("get intelligence history %s: %w", ticker, err)
 	}
+	history := histories[ticker]
 	if err := ctx.Err(); err != nil {
 		return output, err
 	}
@@ -108,7 +126,7 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 	output.AsOf = output.Price.TradingDate
 	output.Source, output.PriceAdjustment = "B3 COTAHIST", "unadjusted"
 	output.WindowUnit, output.PercentageUnit = "trading_sessions", "percent"
-	output.CalculationVersion, output.DataVersion = "1.1", history.DataVersion
+	output.CalculationVersion, output.DataVersion = "1.2", history.DataVersion
 	output.RSISeedFrom = quotes[0].TradingDate
 	output.Calendar = history.Calendar
 	output.Calendar.OfficialVerified = history.CalendarVerified
@@ -239,6 +257,37 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 	if output.Price.ClosePriceCents <= 0 {
 		missing("price.close", "invalid_data")
 	}
+	if benchmark != "" {
+		output.Benchmark = &inbound.IntelligenceBenchmark{Ticker: benchmark}
+		benchmarkHistory := histories[benchmark]
+		output.DataVersion = combinedIntelligenceDataVersion(history.DataVersion, benchmarkHistory.DataVersion)
+		reason := ""
+		if len(benchmarkHistory.Records) == 0 {
+			reason = "benchmark_not_found"
+		} else if !calendarOK {
+			reason = "calendar_unavailable"
+		} else {
+			benchmarkQuotes, normalizeErr := normalizeIntelligenceQuotes(benchmarkHistory.Records, benchmark, market, cutoff)
+			if normalizeErr != nil {
+				reason = "invalid_data"
+			} else {
+				assetReturn, benchmarkReturn, from, to, comparableReason := comparableReturns(quotes, benchmarkQuotes, sessions, return7DPeriods)
+				reason = comparableReason
+				if reason == "" && observed {
+					reason = observedCoverageReason(history.Calendar.Coverage, from, to)
+				}
+				if reason == "" {
+					output.Benchmark.Return7D = &benchmarkReturn
+					relativeStrength := assetReturn - benchmarkReturn
+					output.Benchmark.RelativeStrengthReturn7DPP = &relativeStrength
+				}
+			}
+		}
+		if reason != "" {
+			missing("benchmark.returns.return_7d", reason)
+			missing("benchmark.relative_strength.return_7d_pp", reason)
+		}
+	}
 	if len(output.Unavailable) > 0 {
 		output.Status = "partial"
 	}
@@ -247,6 +296,67 @@ func (s *GetAssetIntelligenceService) Execute(ctx context.Context, input inbound
 	}
 	s.logger.DebugContext(ctx, "asset intelligence calculated", "ticker", ticker, "records", len(quotes), "as_of", output.AsOf, "calculation_version", output.CalculationVersion, "duration", time.Since(started))
 	return output, nil
+}
+
+func combinedIntelligenceDataVersion(assetVersion, benchmarkVersion string) string {
+	hash := sha256.New()
+	hash.Write([]byte(assetVersion))
+	hash.Write([]byte{0})
+	hash.Write([]byte(benchmarkVersion))
+	return "sha256-v1:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func normalizeIntelligenceQuotes(records []domain.QuoteRecord, ticker string, market int, cutoff time.Time) ([]domain.Quote, error) {
+	quotes := make([]domain.Quote, 0, len(records))
+	for _, record := range records {
+		quote := record.Quote
+		if quote.TradingDate.IsZero() {
+			return nil, fmt.Errorf("missing trading date")
+		}
+		quote.TradingDate = comparisonDate(quote.TradingDate)
+		if quote.TradingDate.After(cutoff) {
+			continue
+		}
+		if quote.Ticker != ticker || quote.MarketType != market || (quote.Currency != "" && quote.Currency != "BRL") {
+			return nil, fmt.Errorf("ticker, market or currency mismatch")
+		}
+		quotes = append(quotes, quote)
+	}
+	sort.Slice(quotes, func(i, j int) bool { return quotes[i].TradingDate.Before(quotes[j].TradingDate) })
+	for i := range quotes {
+		if quotes[i].ClosePriceCents <= 0 || (i > 0 && quotes[i].TradingDate.Equal(quotes[i-1].TradingDate)) {
+			return nil, fmt.Errorf("duplicate trading date or invalid closing price")
+		}
+	}
+	return quotes, nil
+}
+
+func comparableReturns(asset, benchmark []domain.Quote, sessions []time.Time, periods int) (float64, float64, time.Time, time.Time, string) {
+	if len(asset) < periods+1 || len(benchmark) < periods+1 {
+		return 0, 0, time.Time{}, time.Time{}, "insufficient_history"
+	}
+	assetWindow := asset[len(asset)-(periods+1):]
+	sessionIndexes := make(map[time.Time]int, len(sessions))
+	for i, session := range sessions {
+		sessionIndexes[comparisonDate(session)] = i
+	}
+	benchmarkPrices := make(map[time.Time]int64, len(benchmark))
+	for _, quote := range benchmark {
+		benchmarkPrices[quote.TradingDate] = quote.ClosePriceCents
+	}
+	previous := -1
+	for _, quote := range assetWindow {
+		index, sessionExists := sessionIndexes[quote.TradingDate]
+		benchmarkPrice, benchmarkExists := benchmarkPrices[quote.TradingDate]
+		if !sessionExists || !benchmarkExists || benchmarkPrice <= 0 || (previous >= 0 && index != previous+1) {
+			return 0, 0, time.Time{}, time.Time{}, "no_comparable_dates"
+		}
+		previous = index
+	}
+	from, to := assetWindow[0].TradingDate, assetWindow[len(assetWindow)-1].TradingDate
+	_, assetReturn := analytics.Return(assetWindow[0].ClosePriceCents, assetWindow[len(assetWindow)-1].ClosePriceCents)
+	_, benchmarkReturn := analytics.Return(benchmarkPrices[from], benchmarkPrices[to])
+	return assetReturn, benchmarkReturn, from, to, ""
 }
 
 // Each involved year must have a valid published import. Intermediate years

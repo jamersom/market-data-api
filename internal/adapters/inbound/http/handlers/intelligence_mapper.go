@@ -59,6 +59,11 @@ func IntelligenceResponse(out inbound.GetAssetIntelligenceOutput) response.Intel
 		v := formatCents(*out.AverageDailyVolume20DCents)
 		d.Liquidity.AverageDailyVolume20D = &v
 	}
+	if out.Benchmark != nil {
+		d.Benchmark = &response.IntelligenceBenchmark{Ticker: out.Benchmark.Ticker}
+		d.Benchmark.Returns.Return7D = metric("benchmark.returns.return_7d", out.Benchmark.Return7D)
+		d.Benchmark.RelativeStrength.Return7DPP = metric("benchmark.relative_strength.return_7d_pp", out.Benchmark.RelativeStrengthReturn7DPP)
+	}
 	m := &result.Meta
 	m.Calendar = &response.IntelligenceCalendar{Source: out.Calendar.Source, Version: out.Calendar.Version, Policy: out.Calendar.Policy, OfficialVerified: out.Calendar.OfficialVerified, Coverage: []response.IntelligenceCalendarCoverage{}}
 	for _, c := range out.Calendar.Coverage {

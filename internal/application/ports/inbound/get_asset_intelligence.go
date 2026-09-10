@@ -9,6 +9,7 @@ import (
 
 type GetAssetIntelligenceInput struct {
 	Ticker      string
+	Benchmark   string
 	AsOf        time.Time // Zero means the latest available quote, bounded by today.
 	MarketType  int
 	WindowYears int
@@ -28,11 +29,18 @@ type RSIPercentile struct {
 	CoverageComplete bool
 }
 
+type IntelligenceBenchmark struct {
+	Ticker                     string
+	Return7D                   *float64
+	RelativeStrengthReturn7DPP *float64
+}
+
 // GetAssetIntelligenceOutput is an application result, not the HTTP DTO.
 // Optional metrics distinguish legitimate zeros from unavailable calculations.
 type GetAssetIntelligenceOutput struct {
 	Calendar                   domain.IntelligenceCalendarMetadata
 	Ticker                     string
+	Benchmark                  *IntelligenceBenchmark
 	MarketType                 int
 	RequestedAsOf              *time.Time
 	AsOf                       time.Time

@@ -39,8 +39,12 @@ func TestObservedCoveragePolicy(t *testing.T) {
 
 type observedHistoryStub struct{ history outbound.IntelligenceHistory }
 
-func (r observedHistoryStub) FindIntelligenceHistory(context.Context, string, int, time.Time) (outbound.IntelligenceHistory, error) {
-	return r.history, nil
+func (r observedHistoryStub) FindIntelligenceHistories(_ context.Context, tickers []string, _ int, _ time.Time) (map[string]outbound.IntelligenceHistory, error) {
+	histories := make(map[string]outbound.IntelligenceHistory, len(tickers))
+	for _, ticker := range tickers {
+		histories[ticker] = r.history
+	}
+	return histories, nil
 }
 
 func TestObservedCalendarEnablesMetricsAndRejectsGaps(t *testing.T) {

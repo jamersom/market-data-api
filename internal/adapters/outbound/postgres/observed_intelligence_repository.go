@@ -24,27 +24,52 @@ func NewObservedIntelligenceQuoteRepository(db *pgxpool.Pool) *ObservedIntellige
 var _ outbound.IntelligenceQuoteRepository = (*ObservedIntelligenceQuoteRepository)(nil)
 
 func (r *ObservedIntelligenceQuoteRepository) FindIntelligenceHistory(ctx context.Context, ticker string, market int, asOf time.Time) (outbound.IntelligenceHistory, error) {
-	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return outbound.IntelligenceHistory{}, fmt.Errorf("begin intelligence snapshot: %w", err)
-	}
-	defer tx.Rollback(context.Background())
-	history, err := NewIntelligenceQuoteRepository(tx, nil).FindIntelligenceHistory(ctx, ticker, market, asOf)
+	histories, err := r.FindIntelligenceHistories(ctx, []string{ticker}, market, asOf)
 	if err != nil {
 		return outbound.IntelligenceHistory{}, err
 	}
-	if len(history.Records) > 0 {
-		from := history.Records[0].Quote.TradingDate
-		to := history.Records[len(history.Records)-1].Quote.TradingDate
-		history.Sessions, history.Calendar, err = loadObservedCalendar(ctx, tx, market, from, to)
+	return histories[ticker], nil
+}
+
+func (r *ObservedIntelligenceQuoteRepository) FindIntelligenceHistories(ctx context.Context, tickers []string, market int, asOf time.Time) (map[string]outbound.IntelligenceHistory, error) {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, fmt.Errorf("begin intelligence snapshot: %w", err)
+	}
+	defer tx.Rollback(context.Background())
+	histories, err := NewIntelligenceQuoteRepository(tx, nil).FindIntelligenceHistories(ctx, tickers, market, asOf)
+	if err != nil {
+		return nil, err
+	}
+	var from, to time.Time
+	for _, history := range histories {
+		if len(history.Records) == 0 {
+			continue
+		}
+		first := history.Records[0].Quote.TradingDate
+		last := history.Records[len(history.Records)-1].Quote.TradingDate
+		if from.IsZero() || first.Before(from) {
+			from = first
+		}
+		if to.IsZero() || last.After(to) {
+			to = last
+		}
+	}
+	if !from.IsZero() {
+		sessions, calendar, err := loadObservedCalendar(ctx, tx, market, from, to)
 		if err != nil {
-			return outbound.IntelligenceHistory{}, err
+			return nil, err
+		}
+		for ticker, history := range histories {
+			history.Sessions = append([]time.Time(nil), sessions...)
+			history.Calendar = calendar
+			histories[ticker] = history
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return outbound.IntelligenceHistory{}, fmt.Errorf("finish intelligence snapshot: %w", err)
+		return nil, fmt.Errorf("finish intelligence snapshot: %w", err)
 	}
-	return history, nil
+	return histories, nil
 }
 
 func loadObservedCalendar(ctx context.Context, db intelligenceQueryer, market int, from, to time.Time) ([]time.Time, domain.IntelligenceCalendarMetadata, error) {

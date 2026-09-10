@@ -21,8 +21,10 @@ type IntelligenceHistory struct {
 	Calendar         domain.IntelligenceCalendarMetadata
 }
 
-// IntelligenceQuoteRepository loads history and calendar in one application
-// call. Calendar coverage may be unavailable and must then remain unverified.
+// IntelligenceQuoteRepository loads all requested histories and their shared
+// calendar in one application call. Calendar coverage may be unavailable and
+// must then remain unverified. Every requested ticker must have a map entry;
+// an empty Records slice represents a ticker without published quotes.
 type IntelligenceQuoteRepository interface {
-	FindIntelligenceHistory(ctx context.Context, ticker string, marketType int, asOf time.Time) (IntelligenceHistory, error)
+	FindIntelligenceHistories(ctx context.Context, tickers []string, marketType int, asOf time.Time) (map[string]IntelligenceHistory, error)
 }

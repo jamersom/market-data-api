@@ -6,13 +6,14 @@ type IntelligenceEnvelope struct {
 }
 
 type Intelligence struct {
-	Ticker    string                `json:"ticker"`
-	Price     IntelligencePrice     `json:"price"`
-	Returns   IntelligenceReturns   `json:"returns"`
-	Trend     IntelligenceTrend     `json:"trend"`
-	Momentum  IntelligenceMomentum  `json:"momentum"`
-	Risk      IntelligenceRisk      `json:"risk"`
-	Liquidity IntelligenceLiquidity `json:"liquidity"`
+	Ticker    string                 `json:"ticker"`
+	Price     IntelligencePrice      `json:"price"`
+	Returns   IntelligenceReturns    `json:"returns"`
+	Trend     IntelligenceTrend      `json:"trend"`
+	Momentum  IntelligenceMomentum   `json:"momentum"`
+	Risk      IntelligenceRisk       `json:"risk"`
+	Liquidity IntelligenceLiquidity  `json:"liquidity"`
+	Benchmark *IntelligenceBenchmark `json:"benchmark,omitempty"`
 }
 type IntelligencePrice struct {
 	Close    *string `json:"close"`
@@ -47,6 +48,17 @@ type IntelligenceRisk struct {
 }
 type IntelligenceLiquidity struct {
 	AverageDailyVolume20D *string `json:"average_daily_volume_20d"`
+}
+type IntelligenceBenchmark struct {
+	Ticker           string                                `json:"ticker"`
+	Returns          IntelligenceBenchmarkReturns          `json:"returns"`
+	RelativeStrength IntelligenceBenchmarkRelativeStrength `json:"relative_strength"`
+}
+type IntelligenceBenchmarkReturns struct {
+	Return7D *float64 `json:"return_7d"`
+}
+type IntelligenceBenchmarkRelativeStrength struct {
+	Return7DPP *float64 `json:"return_7d_pp"`
 }
 type IntelligenceUnavailable struct {
 	Field  string `json:"field"`
