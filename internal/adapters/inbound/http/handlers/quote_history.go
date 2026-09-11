@@ -29,28 +29,28 @@ func (h *QuoteHistoryHandler) Get(
 
 	from, err := parseDateParameter(r, "from")
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 
 	to, err := parseDateParameter(r, "to")
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	marketType, err := optionalIntParameter(r, "marketType", 0)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	limit, err := optionalIntParameter(r, "limit", 0)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	offset, err := optionalIntParameter(r, "offset", 0)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	order := domain.SortOrder(r.URL.Query().Get("order"))
@@ -65,7 +65,7 @@ func (h *QuoteHistoryHandler) Get(
 		},
 	)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 

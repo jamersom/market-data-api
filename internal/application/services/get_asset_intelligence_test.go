@@ -451,3 +451,31 @@ func TestIntelligenceRejectsCorruptHistory(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkAssetIntelligenceLongHistory(b *testing.B) {
+	fixture := intelligenceFixture(2500)
+	start := time.Date(2016, 1, 4, 0, 0, 0, 0, time.UTC)
+	for i := range fixture.history.Records {
+		date := start.AddDate(0, 0, i)
+		fixture.history.Records[i].Quote.TradingDate = date
+		fixture.history.Sessions[i] = date
+	}
+	service := intelligenceService(fixture)
+	service.now = func() time.Time { return time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC) }
+	for _, tc := range []struct {
+		name string
+		asOf time.Time
+	}{
+		{name: "latest"},
+		{name: "historical_as_of", asOf: time.Date(2021, 12, 31, 0, 0, 0, 0, time.UTC)},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := service.Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4", AsOf: tc.asOf}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

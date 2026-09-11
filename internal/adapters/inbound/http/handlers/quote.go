@@ -21,7 +21,7 @@ func (h *QuoteHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ticker := r.PathValue("ticker")
 	marketType, err := optionalIntParameter(r, "marketType", 0)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 
@@ -33,7 +33,7 @@ func (h *QuoteHandler) Get(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 
