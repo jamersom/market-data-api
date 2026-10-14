@@ -65,7 +65,9 @@ Variáveis da aplicação lidas diretamente pelo código Go:
 | `SHUTDOWN_TIMEOUT` | Prazo do graceful shutdown HTTP, no formato de duração de Go | `15s`; valores inválidos usam o padrão. |
 
 Os manifestos de contêiner e implantação também interpolam `POSTGRES_DB`,
-`POSTGRES_USER`, `POSTGRES_PASSWORD`, `API_PORT`, `API_REPLICAS` e `IMAGE_TAG`.
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, `API_PORT` e `API_REPLICAS`. `IMAGE_TAG`
+identifica apenas o build local no Compose. O Stack exige `IMAGE_DIGEST`, no
+formato `sha256:<64 caracteres hexadecimais>`, de uma imagem validada no GHCR.
 Consulte os arquivos versionados antes de executar o ambiente desejado.
 
 ## Banco de dados e preparação do ambiente
@@ -103,14 +105,54 @@ docker compose up --build
 
 O [manifesto de Stack](../../docker-stack.yml) implanta a imagem do GHCR no Docker
 Swarm, exige redes externas chamadas `b3-data-hub_b3_data_hub` e `DockerNet` e
-configura o roteamento Traefik para `marketdata.techcomp.net.br`. O repositório
-não documenta um nome padrão de stack nem um comando automatizado de implantação.
+configura o roteamento Traefik para `marketdata.techcomp.net.br`. A referência é
+`ghcr.io/jamersom/market-data-api@${IMAGE_DIGEST}`: não há tag padrão nem fallback
+para `dev` ou `IMAGE_TAG`. Digest ausente ou vazio impede a renderização do Stack.
+Não basta escolher qualquer digest: a imagem precisa ter passado pelos testes
+operacionais e corresponder à revisão do manifesto usada na implantação.
+
+O health check mantém intervalo de 30s, timeout de 3s, três tentativas e período
+inicial de 5s. Atualização e rollback monitoram as tarefas por 120s, acima da
+estimativa conservadora de detecção `5 + 3 × (30 + 3) = 104s`. Essa margem não
+substitui a validação no Swarm; mudanças nos probes exigem revisar os dois
+monitores. `HEALTH_CHECK_TIMEOUT` deve permanecer menor que os 3s do probe.
+O procedimento de implantação e rollback está no
+[checklist](validation-checklist.md#publicação-implantação-e-rollback-controlados).
 
 Dockerfile, Compose e Stack verificam readiness em `/health/ready`. Siga o
 [checklist operacional](validation-checklist.md) para validar a imagem,
 indisponibilidade da dependência, encerramento e ambiente implantado. Os dados
 da [medição de performance](performance-baseline.md) são um baseline local,
 não uma validação de capacidade de produção.
+
+### Recomendação de health check para o Swarm — decisão pendente
+
+O health check do contêiner atua sobre seu ciclo de vida; não é apenas uma
+sondagem de roteamento. Hoje, falhas persistentes de `/health/ready` causadas por
+PostgreSQL podem tornar a tarefa não saudável e provocar substituição/reinícios.
+Reiniciar a API não recupera o banco compartilhado. Com uma réplica, a substituição
+pode prolongar a indisponibilidade e alcançar o limite de tentativas configurado.
+O período inicial de 5s só protege a inicialização, não uma queda posterior.
+
+Recomenda-se avaliar `/health/live` para o health check do contêiner e manter
+`/health/ready` como verificação de disponibilidade no Traefik e no aceite de
+implantação. Assim, a falha do banco retira o backend do roteamento sem exigir
+reinício de um processo HTTP saudável. Com uma réplica não há backend alternativo:
+continuará havendo indisponibilidade de negócio enquanto o banco estiver fora,
+mas a instância poderá recuperar readiness sem uma substituição forçada.
+
+Essa recomendação não foi aplicada ao Dockerfile, Compose ou Stack. A alteração
+exige aprovação e validação com a versão/provider reais do Traefik. Seu health
+check HTTP deve consultar `/health/ready`, exigir 200 e poder alcançar cada backend
+na rede compartilhada. Não assumir sondagem individual se o provider usar o VIP
+do Swarm. Após a troca proposta, um contêiner `healthy` só comprovaria liveness;
+o aceite de publicação/deploy precisaria continuar exigindo readiness real.
+A API exige PostgreSQL na inicialização: antes de iniciar HTTP, falha de conexão
+ainda encerra o processo, mesmo usando liveness como probe do contêiner.
+
+Referências: [ciclo de vida no Swarm](https://docs.docker.com/engine/swarm/services/),
+[health check HTTP do Traefik](https://doc.traefik.io/traefik/reference/routing-configuration/http/load-balancing/service/#health-check)
+e [configuração do provider Swarm](https://doc.traefik.io/traefik/reference/routing-configuration/other-providers/swarm/).
 
 ## CI/CD
 
@@ -124,13 +166,50 @@ reutilizável. Seu job de validação:
 3. Executa `go mod download`.
 4. Executa `go test ./...`.
 5. Executa `go vet ./...`.
-6. Constrói a imagem Docker Linux/amd64 sem publicá-la.
+6. Verifica a sintaxe Bash e executa os testes de regressão do script de smoke,
+   com Docker/HTTP simulados. Não são integrações PostgreSQL.
+7. Valida o Stack com valores fictícios e exige digest não vazio, sem imprimir
+   a configuração que contém credenciais.
+8. Constrói e carrega a imagem Docker Linux/amd64 sem publicá-la.
+9. Executa [smoke-image.sh](../../.github/scripts/smoke-image.sh) nessa imagem:
+   liveness 200, readiness 200, health check da imagem saudável, readiness 503
+   com PostgreSQL isolado, liveness ainda 200 e recuperação para readiness 200.
 
 O workflow [publish-dev.yml](../../.github/workflows/publish-dev.yml) é executado
 após pushes para `dev` ou por acionamento manual. Primeiro chama o workflow de
-validação; depois constrói e publica imagens `linux/amd64` no GHCR com a tag
-imutável `sha-<short-sha>` e a tag atualizável `dev`. Injeta `dev-<short-sha>` em
-`main.version` por meio do argumento de build Docker.
+validação; depois constrói uma candidata `linux/amd64`, carrega-a no Docker e
+repete os testes operacionais sobre seu ID local. Só então envia essa mesma
+imagem ao GHCR, sem reconstruí-la, com as tags `sha-<short-sha>` e `dev`.
+Injeta `dev-<short-sha>` em `main.version` pelo argumento de build Docker.
+O resumo da execução informa a referência por digest e o valor de `IMAGE_DIGEST`
+para implantação. Tags são referências de conveniência; a identidade usada pelo
+Stack é o digest registrado na execução aprovada.
+
+O smoke test usa PostgreSQL descartável, sem porta de banco publicada, em uma
+rede própria. Não cria dados de mercado, não aplica migrations e não usa `.env`
+nem banco compartilhado. Ele testa conectividade/Ping, não o schema COTAHIST.
+Requer Docker Linux, Bash, curl e acesso à imagem `postgres:17-alpine`.
+
+Os gatilhos continuam apontando para `dev`; não há merge automático de `develop`.
+Antes de publicar, a revisão aprovada precisa conter tanto o núcleo operacional
+quanto estes workflows e scripts. Um workflow antigo não adquire essa proteção
+retroativamente. Publicação de imagem não atualiza o serviço Swarm.
+
+### Concorrência de publicação — proteção proposta, não implementada
+
+O workflow não define `concurrency`, portanto execuções simultâneas podem enviar
+imagens e sobrescrever a tag móvel `dev` em ordens diferentes. O digest aprovado
+continua sendo obrigatório no Stack. Propõe-se a menor proteção: `concurrency`
+no job `publish`, com grupo fixo para `ghcr.io/jamersom/market-data-api` e
+`cancel-in-progress: false`. O grupo deve ser comum a todos os refs que podem
+publicar nesse destino; um grupo por branch não protege a tag compartilhada.
+Manter o job em andamento evita cancelá-lo entre os dois pushes, que não são
+atômicos. O grupo serializa publicações, mas não garante ordem por data de commit
+nem impede sobrescrita por uma publicação manual antiga. A revisão e o digest
+de cada execução ainda precisam ser aprovados.
+
+O bloco de concorrência é somente uma proposta nesta etapa. Referência:
+[concorrência no GitHub Actions](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
 
 Antes de abrir um PR, execute a validação local completa descrita no
 [checklist](validation-checklist.md): `gofmt` nos arquivos Go alterados,

@@ -46,12 +46,13 @@ jobs:
           echo "immutable=ghcr.io/jamersom/market-data-api:sha-${short_sha}" >> "$GITHUB_OUTPUT"
           echo "development=ghcr.io/jamersom/market-data-api:dev" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push image
+      - name: Build candidate image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          push: true
+          push: false
+          load: true
           platforms: linux/amd64
           build-args: |
             VERSION=${{ steps.image.outputs.version }}
@@ -60,3 +61,20 @@ jobs:
             ${{ steps.image.outputs.development }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Validate the exact candidate before publishing
+        env:
+          CANDIDATE_IMAGE: ${{ steps.image.outputs.immutable }}
+        run: bash .github/scripts/smoke-image.sh "$CANDIDATE_IMAGE"
+
+      - name: Push the tested image without rebuilding
+        env:
+          CANDIDATE_IMAGE: ${{ steps.image.outputs.immutable }}
+          DEVELOPMENT_IMAGE: ${{ steps.image.outputs.development }}
+        run: |
+          docker push "$CANDIDATE_IMAGE"
+          docker push "$DEVELOPMENT_IMAGE"
+          reference=$(docker image inspect --format '{{index .RepoDigests 0}}' "$CANDIDATE_IMAGE")
+          digest="${reference##*@}"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'Validated image: `%s`\n\nIMAGE_DIGEST: `%s`\n' "$reference" "$digest" >> "$GITHUB_STEP_SUMMARY"
