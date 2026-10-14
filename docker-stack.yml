@@ -1,6 +1,6 @@
 services:
   api:
-    image: ghcr.io/jamersom/market-data-api:${IMAGE_TAG:-dev}
+    image: ghcr.io/jamersom/market-data-api@${IMAGE_DIGEST:?IMAGE_DIGEST is required (validated sha256 digest)}
 
     environment:
       TZ: America/Sao_Paulo
@@ -49,11 +49,13 @@ services:
         parallelism: 1
         order: start-first
         failure_action: rollback
-        monitor: 30s
+        # 5s startup + 3 * (30s interval + 3s timeout) = 104s; allow margin.
+        monitor: 120s
 
       rollback_config:
         parallelism: 1
         order: stop-first
+        monitor: 120s
 
       restart_policy:
         condition: on-failure

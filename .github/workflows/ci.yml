@@ -34,6 +34,29 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
+      - name: Validate smoke script syntax and regression cases
+        run: |
+          bash -n .github/scripts/smoke-image.sh
+          bash -n .github/scripts/smoke-image-test.sh
+          bash .github/scripts/smoke-image-test.sh
+
+      - name: Validate Stack configuration and required digest
+        env:
+          POSTGRES_USER: validation
+          POSTGRES_PASSWORD: validation-only
+          POSTGRES_DB: validation
+        run: |
+          export IMAGE_DIGEST="sha256:$(printf '%064d' 0)"
+          docker stack config --compose-file docker-stack.yml > /dev/null
+          if IMAGE_DIGEST= docker stack config --compose-file docker-stack.yml > /dev/null 2>&1; then
+            echo 'Stack must reject an empty IMAGE_DIGEST' >&2
+            exit 1
+          fi
+          if env -u IMAGE_DIGEST docker stack config --compose-file docker-stack.yml > /dev/null 2>&1; then
+            echo 'Stack must require IMAGE_DIGEST' >&2
+            exit 1
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -43,8 +66,13 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
+          load: true
+          tags: market-data-api:ci
           platforms: linux/amd64
           build-args: |
             VERSION=ci-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Validate operational endpoints in the image
+        run: bash .github/scripts/smoke-image.sh market-data-api:ci
