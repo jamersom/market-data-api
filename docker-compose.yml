@@ -20,10 +20,19 @@ services:
       DB_MIN_CONNECTIONS: ${DB_MIN_CONNECTIONS:-2}
       DB_MAX_CONN_LIFETIME: ${DB_MAX_CONN_LIFETIME:-30m}
       DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5s}
+      HEALTH_CHECK_TIMEOUT: ${HEALTH_CHECK_TIMEOUT:-2s}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-15s}
     ports:
       - "${API_PORT:-8080}:8080"
     networks:
       - b3_data_hub
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/ready"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    stop_grace_period: ${SHUTDOWN_TIMEOUT:-15s}
 
 networks:
   b3_data_hub:

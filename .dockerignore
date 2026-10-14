@@ -15,4 +15,5 @@ dist/
 build/
 tmp/
 temp/
+.tmp-go-cache/
 *.log

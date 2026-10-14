@@ -49,6 +49,12 @@ func RegisterRoutes(
 	mux.HandleFunc("GET /docs/", serveSwaggerUI)
 }
 
+func RegisterOperationalRoutes(mux *http.ServeMux, handler *handlers.OperationsHandler) {
+	mux.HandleFunc("GET /health/live", handler.Live)
+	mux.HandleFunc("GET /health/ready", handler.Ready)
+	mux.HandleFunc("GET /metrics", handler.Metrics)
+}
+
 func serveOpenAPI(writer http.ResponseWriter, _ *http.Request) {
 	writer.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 	writer.WriteHeader(http.StatusOK)

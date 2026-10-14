@@ -14,6 +14,7 @@ type intelligenceRows struct {
 	pgx.Rows
 	count, index          int
 	closePrice            int64
+	tickers               []string
 	closed                bool
 	scanErr, iterationErr error
 }
@@ -29,7 +30,11 @@ func (r *intelligenceRows) Scan(dest ...any) error {
 		v := reflect.ValueOf(ptr).Elem()
 		v.Set(reflect.Zero(v.Type()))
 	}
-	*dest[0].(*string) = "PETR4"
+	ticker := "PETR4"
+	if len(r.tickers) >= r.index {
+		ticker = r.tickers[r.index-1]
+	}
+	*dest[0].(*string) = ticker
 	*dest[1].(*time.Time) = time.Date(2024, 1, r.index, 0, 0, 0, 0, time.UTC)
 	*dest[3].(*int) = 10
 	*dest[7].(*string) = "BRL"
@@ -80,7 +85,7 @@ func TestIntelligenceRepositoryHistoryAndVersion(t *testing.T) {
 		if len(history.Records) != 3 || history.CalendarVerified || len(history.Sessions) != 0 || !db.rows.closed {
 			t.Fatalf("history: %+v", history)
 		}
-		if db.calls != 1 || db.args[0] != "PETR4" || db.args[1] != 10 || db.args[2].(time.Time).Format(time.RFC3339) != "2024-01-05T00:00:00Z" {
+		if db.calls != 1 || !reflect.DeepEqual(db.args[0], []string{"PETR4"}) || db.args[1] != 10 || db.args[2].(time.Time).Format(time.RFC3339) != "2024-01-05T00:00:00Z" {
 			t.Fatalf("query arguments: %v", db.args)
 		}
 		return history.DataVersion, db
@@ -90,6 +95,22 @@ func TestIntelligenceRepositoryHistoryAndVersion(t *testing.T) {
 	c, _ := load(101)
 	if a != b || a == c {
 		t.Fatal("version must be stable and detect quote corrections")
+	}
+}
+
+func TestIntelligenceRepositoryLoadsTickersInBatch(t *testing.T) {
+	db := &intelligenceDB{rows: &intelligenceRows{count: 2, closePrice: 100, tickers: []string{"IBOV", "PETR4"}}}
+	histories, err := NewIntelligenceQuoteRepository(db, nil).FindIntelligenceHistories(
+		context.Background(), []string{"PETR4", "IBOV"}, 10, time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if db.calls != 1 || !reflect.DeepEqual(db.args[0], []string{"PETR4", "IBOV"}) || len(histories["PETR4"].Records) != 1 || len(histories["IBOV"].Records) != 1 {
+		t.Fatalf("batch histories: %+v, args=%v", histories, db.args)
+	}
+	if histories["PETR4"].DataVersion == histories["IBOV"].DataVersion {
+		t.Fatal("data version must include ticker identity")
 	}
 }
 

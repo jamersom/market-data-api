@@ -3,13 +3,14 @@ package handlers
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/jamersom/market-data-api/internal/adapters/inbound/http/response"
 	"github.com/jamersom/market-data-api/internal/domain"
 )
 
-func writeError(w http.ResponseWriter, err error) {
+func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var validationErr domain.ValidationError
 
 	switch {
@@ -44,7 +45,17 @@ func writeError(w http.ResponseWriter, err error) {
 		}})
 
 	default:
-		// TODO: registrar o erro interno em um logger estruturado.
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		}
+		slog.Default().ErrorContext(r.Context(), "unexpected HTTP error",
+			"method", r.Method,
+			"route", route,
+			"status", http.StatusInternalServerError,
+			"category", "internal",
+			"error", err,
+		)
 		writeJSON(w, http.StatusInternalServerError, response.Error{Error: response.ErrorDetail{
 			Code:      "internal_error",
 			Message:   "an unexpected error occurred",

@@ -11,25 +11,38 @@ import (
 	"github.com/jamersom/market-data-api/internal/application/ports/inbound"
 	"github.com/jamersom/market-data-api/internal/application/ports/outbound"
 	"github.com/jamersom/market-data-api/internal/domain"
+	"github.com/jamersom/market-data-api/internal/domain/signals"
 )
 
 type intelligenceRepositoryStub struct {
-	history outbound.IntelligenceHistory
-	err     error
-	calls   int
-	ticker  string
-	market  int
-	cutoff  time.Time
-	cancel  context.CancelFunc
+	history    outbound.IntelligenceHistory
+	benchmarks map[string]outbound.IntelligenceHistory
+	err        error
+	calls      int
+	tickers    []string
+	market     int
+	cutoff     time.Time
+	cancel     context.CancelFunc
 }
 
-func (r *intelligenceRepositoryStub) FindIntelligenceHistory(ctx context.Context, ticker string, market int, cutoff time.Time) (outbound.IntelligenceHistory, error) {
+func (r *intelligenceRepositoryStub) FindIntelligenceHistories(ctx context.Context, tickers []string, market int, cutoff time.Time) (map[string]outbound.IntelligenceHistory, error) {
 	r.calls++
-	r.ticker, r.market, r.cutoff = ticker, market, cutoff
+	r.tickers, r.market, r.cutoff = append([]string(nil), tickers...), market, cutoff
 	if r.cancel != nil {
 		r.cancel()
 	}
-	return r.history, r.err
+	if r.err != nil {
+		return nil, r.err
+	}
+	histories := make(map[string]outbound.IntelligenceHistory, len(tickers))
+	for _, ticker := range tickers {
+		if ticker == "PETR4" {
+			histories[ticker] = r.history
+		} else {
+			histories[ticker] = r.benchmarks[ticker]
+		}
+	}
+	return histories, nil
 }
 
 func intelligenceFixture(n int) *intelligenceRepositoryStub {
@@ -52,6 +65,17 @@ func intelligenceService(r *intelligenceRepositoryStub) *GetAssetIntelligenceSer
 	return s
 }
 
+func benchmarkFixture(r *intelligenceRepositoryStub, ticker string, indexes []int) outbound.IntelligenceHistory {
+	history := outbound.IntelligenceHistory{DataVersion: "benchmark-fixture-v1"}
+	for _, index := range indexes {
+		quote := r.history.Records[index].Quote
+		quote.Ticker = ticker
+		quote.ClosePriceCents = 10000
+		history.Records = append(history.Records, domain.QuoteRecord{Quote: quote})
+	}
+	return history
+}
+
 func hasUnavailable(out inbound.GetAssetIntelligenceOutput, field, reason string) bool {
 	for _, entry := range out.Unavailable {
 		if entry.Field == field && entry.Reason == reason {
@@ -61,13 +85,22 @@ func hasUnavailable(out inbound.GetAssetIntelligenceOutput, field, reason string
 	return false
 }
 
+func signalByID(out inbound.GetAssetIntelligenceOutput, id string) signals.Evaluation {
+	for _, evaluation := range out.Signals {
+		if evaluation.ID == id {
+			return evaluation
+		}
+	}
+	return signals.Evaluation{}
+}
+
 func TestIntelligenceCompleteCore(t *testing.T) {
 	r := intelligenceFixture(rsiPeriod + MinimumRSIPercentileObservations + 1)
 	out, err := intelligenceService(r).Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: " petr4 "})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.calls != 1 || r.ticker != "PETR4" || r.market != 10 || r.cutoff.Format(time.DateOnly) != "2026-09-06" {
+	if r.calls != 1 || !reflect.DeepEqual(r.tickers, []string{"PETR4"}) || r.market != 10 || r.cutoff.Format(time.DateOnly) != "2026-09-06" {
 		t.Fatalf("query: %+v", r)
 	}
 	for name, value := range map[string]*float64{"return": out.Return7D, "distance": out.DistanceSMA20, "volatility": out.Volatility30D, "current": out.DrawdownCurrent, "maximum": out.MaximumDrawdown252D} {
@@ -75,14 +108,107 @@ func TestIntelligenceCompleteCore(t *testing.T) {
 			t.Fatalf("%s = %v, want available zero", name, value)
 		}
 	}
-	if out.SMA20Cents == nil || *out.SMA20Cents != 10000 || out.RSI14 == nil || *out.RSI14 != 50 || out.RSIPercentile == nil || out.RSIPercentile.Value != 50 || out.AverageDailyVolume20DCents == nil || *out.AverageDailyVolume20DCents != 100000 {
+	if out.SMA20Cents == nil || *out.SMA20Cents != 10000 || out.SMA50Cents == nil || *out.SMA50Cents != 10000 || out.RSI14 == nil || *out.RSI14 != 50 || out.RSIPercentile == nil || out.RSIPercentile.Value != 50 || out.AverageDailyVolume20DCents == nil || *out.AverageDailyVolume20DCents != 100000 {
 		t.Fatalf("metrics: %+v", out)
 	}
 	if out.RSIPercentile.WindowYears != DefaultRSIPercentileWindowYears {
 		t.Fatalf("default RSI window = %d", out.RSIPercentile.WindowYears)
 	}
-	if out.RequestedAsOf != nil || out.Status != "complete" || out.DataVersion != "fixture-v1" || out.PriceAdjustment != "unadjusted" || len(out.Unavailable) != 0 {
+	if out.RequestedAsOf != nil || out.Status != "complete" || out.DataVersion != "fixture-v1" || out.CalculationVersion != "1.2" || out.RulesetVersion != signals.RulesetV1Version || out.PriceAdjustment != "unadjusted" || len(out.Unavailable) != 0 {
 		t.Fatalf("metadata: %+v", out)
+	}
+	if len(out.Signals) != 6 || signalByID(out, "rsi_overbought").Status != signals.StatusNotTriggered || signalByID(out, "sma20_above_sma50").Status != signals.StatusNotTriggered {
+		t.Fatalf("signals: %+v", out.Signals)
+	}
+}
+
+func TestIntelligenceBenchmarkRelativeStrength(t *testing.T) {
+	r := intelligenceFixture(rsiPeriod + MinimumRSIPercentileObservations + 1)
+	last := len(r.history.Records) - 1
+	r.history.Records[last].Quote.ClosePriceCents = 11250
+	indexes := make([]int, return7DPeriods+1)
+	for i := range indexes {
+		indexes[i] = last - return7DPeriods + i
+	}
+	benchmark := benchmarkFixture(r, "IBOV", indexes)
+	benchmark.Records[len(benchmark.Records)-1].Quote.ClosePriceCents = 10720
+	r.benchmarks = map[string]outbound.IntelligenceHistory{"IBOV": benchmark}
+
+	service := intelligenceService(r)
+	baseline, err := service.Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := service.Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4", Benchmark: " ibov "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(r.tickers, []string{"PETR4", "IBOV"}) || out.Benchmark == nil || out.Benchmark.Ticker != "IBOV" {
+		t.Fatalf("benchmark request: %+v, %+v", r.tickers, out.Benchmark)
+	}
+	if out.Return7D == nil || math.Abs(*out.Return7D-12.5) > 1e-12 || out.Benchmark.Return7D == nil || math.Abs(*out.Benchmark.Return7D-7.2) > 1e-12 || out.Benchmark.RelativeStrengthReturn7DPP == nil || math.Abs(*out.Benchmark.RelativeStrengthReturn7DPP-5.3) > 1e-12 {
+		t.Fatalf("relative strength: asset=%v benchmark=%+v", out.Return7D, out.Benchmark)
+	}
+	if baseline.Return7D == nil || *baseline.Return7D != *out.Return7D || baseline.RSI14 == nil || out.RSI14 == nil || *baseline.RSI14 != *out.RSI14 || baseline.RSIPercentile == nil || out.RSIPercentile == nil || baseline.RSIPercentile.Value != out.RSIPercentile.Value || baseline.Volatility30D == nil || out.Volatility30D == nil || *baseline.Volatility30D != *out.Volatility30D {
+		t.Fatalf("benchmark changed independent indicators: baseline=%+v output=%+v", baseline, out)
+	}
+	if out.Status != "complete" || len(out.Unavailable) != 0 {
+		t.Fatalf("metadata: %+v", out)
+	}
+	if out.DataVersion == baseline.DataVersion || out.DataVersion != combinedIntelligenceDataVersion(baseline.DataVersion, benchmark.DataVersion) {
+		t.Fatalf("combined data version: %q", out.DataVersion)
+	}
+}
+
+func TestIntelligenceBenchmarkUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+		benchmark    func(*intelligenceRepositoryStub) outbound.IntelligenceHistory
+	}{
+		{"not found", "benchmark_not_found", func(*intelligenceRepositoryStub) outbound.IntelligenceHistory { return outbound.IntelligenceHistory{} }},
+		{"insufficient history", "insufficient_history", func(r *intelligenceRepositoryStub) outbound.IntelligenceHistory {
+			return benchmarkFixture(r, "IBOV", []int{260, 261, 262, 263, 264, 265, 266})
+		}},
+		{"no comparable dates", "no_comparable_dates", func(r *intelligenceRepositoryStub) outbound.IntelligenceHistory {
+			return benchmarkFixture(r, "IBOV", []int{250, 252, 254, 256, 258, 260, 262, 264})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := intelligenceFixture(rsiPeriod + MinimumRSIPercentileObservations + 1)
+			r.benchmarks = map[string]outbound.IntelligenceHistory{"IBOV": tc.benchmark(r)}
+			out, err := intelligenceService(r).Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4", Benchmark: "IBOV"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Benchmark == nil || out.Benchmark.Return7D != nil || out.Benchmark.RelativeStrengthReturn7DPP != nil || out.Return7D == nil || out.RSI14 == nil || out.RSIPercentile == nil {
+				t.Fatalf("independent indicators or unavailable benchmark: %+v", out)
+			}
+			if out.Status != "partial" || !hasUnavailable(out, "benchmark.returns.return_7d", tc.reason) || !hasUnavailable(out, "benchmark.relative_strength.return_7d_pp", tc.reason) {
+				t.Fatalf("unavailable: %+v", out.Unavailable)
+			}
+		})
+	}
+}
+
+func TestIntelligenceBenchmarkHistoricalAsOf(t *testing.T) {
+	r := intelligenceFixture(rsiPeriod + MinimumRSIPercentileObservations + 5)
+	indexes := make([]int, len(r.history.Records))
+	for i := range indexes {
+		indexes[i] = i
+	}
+	benchmark := benchmarkFixture(r, "IBOV", indexes)
+	asOfIndex := len(r.history.Records) - 4
+	for i := asOfIndex + 1; i < len(benchmark.Records); i++ {
+		benchmark.Records[i].Quote.ClosePriceCents = 999999
+	}
+	r.benchmarks = map[string]outbound.IntelligenceHistory{"IBOV": benchmark}
+
+	out, err := intelligenceService(r).Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4", Benchmark: "IBOV", AsOf: r.history.Sessions[asOfIndex]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.AsOf != r.history.Sessions[asOfIndex] || out.Benchmark == nil || out.Benchmark.Return7D == nil || *out.Benchmark.Return7D != 0 || out.Benchmark.RelativeStrengthReturn7DPP == nil || *out.Benchmark.RelativeStrengthReturn7DPP != 0 {
+		t.Fatalf("future benchmark data leaked: %+v", out)
 	}
 }
 
@@ -191,6 +317,9 @@ func TestIntelligenceAsOfAndNoMutation(t *testing.T) {
 	if out.AsOf != date || out.RequestedAsOf == nil || *out.RequestedAsOf != date || out.Price.ClosePriceCents != 10000 || out.Return7D == nil || *out.Return7D != 0 {
 		t.Fatalf("future data leaked: %+v", out)
 	}
+	if signalByID(out, "price_above_sma20").Status != signals.StatusNotTriggered || signalByID(out, "price_below_sma20").Status != signals.StatusNotTriggered {
+		t.Fatalf("signals used data after asOf: %+v", out.Signals)
+	}
 	if !reflect.DeepEqual(before, r.history.Records) {
 		t.Fatal("repository history mutated")
 	}
@@ -205,7 +334,7 @@ func TestIntelligenceHistoryBoundaries(t *testing.T) {
 		for _, tc := range []struct {
 			value *float64
 			min   int
-		}{{out.Return7D, 8}, {out.SMA20Cents, 20}, {out.DistanceSMA20, 20}, {out.RSI14, 15}, {out.Volatility30D, 31}, {out.DrawdownCurrent, 252}, {out.MaximumDrawdown252D, 252}} {
+		}{{out.Return7D, 8}, {out.SMA20Cents, 20}, {out.SMA50Cents, 50}, {out.DistanceSMA20, 20}, {out.RSI14, 15}, {out.Volatility30D, 31}, {out.DrawdownCurrent, 252}, {out.MaximumDrawdown252D, 252}} {
 			if (tc.value != nil) != (n >= tc.min) {
 				t.Fatalf("history %d: minimum %d, value %v", n, tc.min, tc.value)
 			}
@@ -249,6 +378,8 @@ func TestIntelligenceErrors(t *testing.T) {
 		want  error
 	}{
 		{inbound.GetAssetIntelligenceInput{Ticker: "!"}, domain.ErrInvalidTicker},
+		{inbound.GetAssetIntelligenceInput{Ticker: "PETR4", Benchmark: "!"}, domain.ErrInvalidTicker},
+		{inbound.GetAssetIntelligenceInput{Ticker: "PETR4", Benchmark: " petr4 "}, domain.ErrInvalidTicker},
 		{inbound.GetAssetIntelligenceInput{Ticker: "PETR4", MarketType: -1}, domain.ErrInvalidMarketType},
 		{inbound.GetAssetIntelligenceInput{Ticker: "PETR4", WindowYears: -1}, nil},
 		{inbound.GetAssetIntelligenceInput{Ticker: "PETR4", AsOf: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)}, domain.ErrInvalidDateRange},
@@ -318,5 +449,33 @@ func TestIntelligenceRejectsCorruptHistory(t *testing.T) {
 		if _, err := intelligenceService(r).Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4"}); err == nil {
 			t.Fatal("accepted corrupt history")
 		}
+	}
+}
+
+func BenchmarkAssetIntelligenceLongHistory(b *testing.B) {
+	fixture := intelligenceFixture(2500)
+	start := time.Date(2016, 1, 4, 0, 0, 0, 0, time.UTC)
+	for i := range fixture.history.Records {
+		date := start.AddDate(0, 0, i)
+		fixture.history.Records[i].Quote.TradingDate = date
+		fixture.history.Sessions[i] = date
+	}
+	service := intelligenceService(fixture)
+	service.now = func() time.Time { return time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC) }
+	for _, tc := range []struct {
+		name string
+		asOf time.Time
+	}{
+		{name: "latest"},
+		{name: "historical_as_of", asOf: time.Date(2021, 12, 31, 0, 0, 0, 0, time.UTC)},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := service.Execute(context.Background(), inbound.GetAssetIntelligenceInput{Ticker: "PETR4", AsOf: tc.asOf}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

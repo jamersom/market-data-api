@@ -42,11 +42,11 @@ func (h *ComparisonsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		switch name {
 		case "tickers", "from", "to", "marketType", "metrics", "benchmark", "includeSeries":
 		default:
-			writeError(w, domain.ValidationError{Field: name, Message: "unknown query parameter"})
+			writeError(w, r, domain.ValidationError{Field: name, Message: "unknown query parameter"})
 			return
 		}
 		if len(values) != 1 {
-			writeError(w, domain.ValidationError{Field: name, Message: "query parameter must not be repeated"})
+			writeError(w, r, domain.ValidationError{Field: name, Message: "query parameter must not be repeated"})
 			return
 		}
 	}
@@ -59,7 +59,7 @@ func (h *ComparisonsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if query.Has("marketType") {
 		market, err := strconv.Atoi(query.Get("marketType"))
 		if err != nil {
-			writeError(w, domain.ValidationError{Field: "marketType", Message: "marketType must be an integer", Err: domain.ErrInvalidMarketType})
+			writeError(w, r, domain.ValidationError{Field: "marketType", Message: "marketType must be an integer", Err: domain.ErrInvalidMarketType})
 			return
 		}
 		request.MarketType = &market
@@ -70,7 +70,7 @@ func (h *ComparisonsHandler) Get(w http.ResponseWriter, r *http.Request) {
 			request.IncludeSeries = true
 		case "false":
 		default:
-			writeError(w, domain.ValidationError{Field: "includeSeries", Message: "includeSeries must be true or false"})
+			writeError(w, r, domain.ValidationError{Field: "includeSeries", Message: "includeSeries must be true or false"})
 			return
 		}
 	}
@@ -114,14 +114,14 @@ func (h *ComparisonsHandler) Post(w http.ResponseWriter, r *http.Request) {
 func (h *ComparisonsHandler) execute(w http.ResponseWriter, r *http.Request, request comparisonRequest) {
 	input, err := request.input()
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), comparisonTimeout)
 	defer cancel()
 	output, err := h.compare.Execute(ctx, input)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, ComparisonResponse(output))

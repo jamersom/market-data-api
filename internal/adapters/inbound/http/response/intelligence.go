@@ -6,13 +6,15 @@ type IntelligenceEnvelope struct {
 }
 
 type Intelligence struct {
-	Ticker    string                `json:"ticker"`
-	Price     IntelligencePrice     `json:"price"`
-	Returns   IntelligenceReturns   `json:"returns"`
-	Trend     IntelligenceTrend     `json:"trend"`
-	Momentum  IntelligenceMomentum  `json:"momentum"`
-	Risk      IntelligenceRisk      `json:"risk"`
-	Liquidity IntelligenceLiquidity `json:"liquidity"`
+	Ticker    string                 `json:"ticker"`
+	Price     IntelligencePrice      `json:"price"`
+	Returns   IntelligenceReturns    `json:"returns"`
+	Trend     IntelligenceTrend      `json:"trend"`
+	Momentum  IntelligenceMomentum   `json:"momentum"`
+	Risk      IntelligenceRisk       `json:"risk"`
+	Liquidity IntelligenceLiquidity  `json:"liquidity"`
+	Benchmark *IntelligenceBenchmark `json:"benchmark,omitempty"`
+	Signals   []IntelligenceSignal   `json:"signals"`
 }
 type IntelligencePrice struct {
 	Close    *string `json:"close"`
@@ -23,6 +25,7 @@ type IntelligenceReturns struct {
 }
 type IntelligenceTrend struct {
 	SMA20         *string  `json:"sma20"`
+	SMA50         *string  `json:"sma50"`
 	DistanceSMA20 *float64 `json:"distance_sma20"`
 }
 type IntelligenceMomentum struct {
@@ -48,6 +51,30 @@ type IntelligenceRisk struct {
 type IntelligenceLiquidity struct {
 	AverageDailyVolume20D *string `json:"average_daily_volume_20d"`
 }
+type IntelligenceBenchmark struct {
+	Ticker           string                                `json:"ticker"`
+	Returns          IntelligenceBenchmarkReturns          `json:"returns"`
+	RelativeStrength IntelligenceBenchmarkRelativeStrength `json:"relative_strength"`
+}
+type IntelligenceBenchmarkReturns struct {
+	Return7D *float64 `json:"return_7d"`
+}
+type IntelligenceBenchmarkRelativeStrength struct {
+	Return7DPP *float64 `json:"return_7d_pp"`
+}
+type IntelligenceSignal struct {
+	ID       string                      `json:"id"`
+	Status   string                      `json:"status"`
+	Severity string                      `json:"severity"`
+	Evidence *IntelligenceSignalEvidence `json:"evidence,omitempty"`
+}
+type IntelligenceSignalEvidence struct {
+	RSI14     *float64 `json:"rsi14,omitempty"`
+	Threshold *float64 `json:"threshold,omitempty"`
+	Price     *float64 `json:"price,omitempty"`
+	SMA20     *float64 `json:"sma20,omitempty"`
+	SMA50     *float64 `json:"sma50,omitempty"`
+}
 type IntelligenceUnavailable struct {
 	Field  string `json:"field"`
 	Reason string `json:"reason"`
@@ -63,6 +90,7 @@ type IntelligenceMetadata struct {
 	WindowUnit         string                    `json:"window_unit"`
 	PercentageUnit     string                    `json:"percentage_unit"`
 	CalculationVersion string                    `json:"calculation_version,omitempty"`
+	RulesetVersion     string                    `json:"ruleset_version,omitempty"`
 	DataVersion        string                    `json:"data_version,omitempty"`
 	RSISeedFrom        string                    `json:"rsi_seed_from,omitempty"`
 	Unavailable        []IntelligenceUnavailable `json:"unavailable"`

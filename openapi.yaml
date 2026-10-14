@@ -1,11 +1,49 @@
 openapi: 3.1.0
 info:
   title: Market Data API
-  version: 1.5.0
+  version: 1.8.0
   description: Consulta cotações diárias não ajustadas publicadas pelo B3 Data Hub.
 servers:
   - url: /
 paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      summary: Verifica se o processo HTTP está vivo
+      description: Não consulta PostgreSQL nem outras dependências externas.
+      responses:
+        '200':
+          description: Processo saudável
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthStatus' }
+  /health/ready:
+    get:
+      operationId: getReadiness
+      summary: Verifica se a instância está pronta
+      description: Executa um Ping leve no PostgreSQL com timeout configurável. Não consulta dados de negócio.
+      responses:
+        '200':
+          description: Dependências obrigatórias disponíveis
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthStatus' }
+        '503':
+          description: PostgreSQL indisponível; nenhum detalhe interno é exposto
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthStatus' }
+  /metrics:
+    get:
+      operationId: getOperationalMetrics
+      summary: Retorna métricas operacionais acumuladas pela instância
+      description: Métricas JSON em memória, reiniciadas com o processo. Rotas e operações usam dimensões de cardinalidade controlada.
+      responses:
+        '200':
+          description: Snapshot das métricas HTTP, PostgreSQL e runtime Go
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OperationalMetrics' }
   /assets/{ticker}/intelligence:
     get:
       operationId: getAssetIntelligence
@@ -22,19 +60,25 @@ paths:
         Anos ausentes ou cobertura inválida indisponibilizam somente as janelas afetadas.
         Sessões são limitadas à última cotação até asOf. O percentil histórico do RSI
         usa anos civis, exclui o RSI da própria referência e exige 252 observações válidas.
-        Benchmark não é aceito nesta versão.
+        Quando benchmark é informado, ativo e benchmark são carregados no mesmo snapshot
+        e comparados nas últimas oito sessões consecutivas do ativo quando todas também existem para o benchmark.
+        Os sinais são avaliações técnicas determinísticas dos indicadores e não constituem recomendação de investimento.
         Retorna somente indicadores implementados. Status complete significa que todos foram calculados; caso contrário, partial.
       parameters:
         - $ref: '#/components/parameters/Ticker'
         - $ref: '#/components/parameters/MarketType'
         - name: includeDetails
           in: query
-          description: Inclui meta.calendar, meta.calculation_version, meta.data_version e meta.rsi_seed_from.
+          description: Inclui meta.calendar, meta.calculation_version, meta.ruleset_version, meta.data_version e meta.rsi_seed_from.
           schema: { type: boolean, default: false }
         - name: rsiWindow
           in: query
           description: Janela civil do percentil histórico do RSI(14), expressa como um número positivo de anos seguido por y.
           schema: { type: string, pattern: '^[1-9][0-9]*y$', default: 3y, example: 5y }
+        - name: benchmark
+          in: query
+          description: Ticker opcional usado para retorno comparável e força relativa. Deve ser válido, ter cobertura na fonte e ser diferente do ativo.
+          schema: { type: string, pattern: '^[A-Za-z0-9]{4,12}$', example: IBOV }
         - name: asOf
           in: query
           description: Data civil não futura e diferente de 0001-01-01.
@@ -192,6 +236,46 @@ components:
       description: Código do tipo de mercado B3; 10 representa mercado à vista.
       schema: { type: integer, minimum: 1, default: 10 }
   schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, unavailable] }
+    OperationalMetrics:
+      type: object
+      required: [http, database, runtime]
+      properties:
+        http:
+          type: array
+          items:
+            type: object
+            required: [method, route, status, requests, total_duration_ms]
+            properties:
+              method: { type: string, enum: [GET, POST] }
+              route: { type: string, example: '/assets/{ticker}/intelligence' }
+              status: { type: integer, minimum: 100, maximum: 599 }
+              requests: { type: integer, minimum: 0 }
+              total_duration_ms: { type: number, minimum: 0 }
+        database:
+          type: array
+          items:
+            type: object
+            required: [operation, calls, errors, rows, total_duration_ms]
+            properties:
+              operation: { type: string, enum: [readiness_ping, quote_latest, quote_history, comparison_history, intelligence_history] }
+              calls: { type: integer, minimum: 0 }
+              errors: { type: integer, minimum: 0 }
+              rows: { type: integer, minimum: 0 }
+              total_duration_ms: { type: number, minimum: 0 }
+        runtime:
+          type: object
+          required: [goroutines, heap_alloc_bytes, heap_in_use_bytes, system_bytes, completed_gcs]
+          properties:
+            goroutines: { type: integer, minimum: 0 }
+            heap_alloc_bytes: { type: integer, minimum: 0 }
+            heap_in_use_bytes: { type: integer, minimum: 0 }
+            system_bytes: { type: integer, minimum: 0 }
+            completed_gcs: { type: integer, minimum: 0 }
     IntelligenceNumber:
       type: [number, 'null']
       description: Arredondado a duas casas; percentuais usam 20 para 20%. RSI usa escala 0 a 100.
@@ -199,13 +283,33 @@ components:
       type: [string, 'null']
       pattern: '^-?[0-9]+\.[0-9]{2}$'
       description: Valor monetário em reais com duas casas decimais.
+    IntelligenceSignal:
+      type: object
+      description: Avaliação técnica determinística. Não representa recomendação de investimento. Evidence é omitida quando status é unavailable.
+      required: [id, status, severity]
+      properties:
+        id:
+          type: string
+          enum: [rsi_overbought, rsi_oversold, price_above_sma20, price_below_sma20, sma20_above_sma50, sma20_below_sma50]
+        status: { type: string, enum: [triggered, not_triggered, unavailable] }
+        severity: { type: string, enum: [info, warning] }
+        evidence:
+          type: object
+          minProperties: 2
+          properties:
+            rsi14: { type: number, minimum: 0, maximum: 100, description: RSI efetivamente comparado pela regra. }
+            threshold: { type: number, enum: [30, 70] }
+            price: { type: number, description: Preço em reais efetivamente comparado pela regra. }
+            sma20: { type: number, description: SMA20 em reais efetivamente comparada pela regra. }
+            sma50: { type: number, description: SMA50 em reais efetivamente comparada pela regra. }
+          example: { rsi14: 74.8, threshold: 70 }
     IntelligenceEnvelope:
       type: object
       required: [data, meta]
       properties:
         data:
           type: object
-          required: [ticker, price, returns, trend, momentum, risk, liquidity]
+          required: [ticker, price, returns, trend, momentum, risk, liquidity, signals]
           properties:
             ticker: { type: string, example: PETR4 }
             price:
@@ -221,9 +325,10 @@ components:
                 return_7d: { $ref: '#/components/schemas/IntelligenceNumber', description: Retorno de sete pregões; exige oito fechamentos. }
             trend:
               type: object
-              required: [sma20, distance_sma20]
+              required: [sma20, sma50, distance_sma20]
               properties:
                 sma20: { $ref: '#/components/schemas/IntelligenceMoney', description: Média de vinte fechamentos; arredondada apenas na saída. }
+                sma50: { $ref: '#/components/schemas/IntelligenceMoney', description: Média de cinquenta fechamentos; arredondada apenas na saída. }
                 distance_sma20: { $ref: '#/components/schemas/IntelligenceNumber', description: Distância percentual da média não arredondada. }
             momentum:
               type: object
@@ -257,6 +362,28 @@ components:
               required: [average_daily_volume_20d]
               properties:
                 average_daily_volume_20d: { $ref: '#/components/schemas/IntelligenceMoney', description: Volume financeiro médio de vinte pregões; fração de centavo truncada. }
+            benchmark:
+              type: object
+              description: Presente somente quando benchmark é solicitado. Valores dependentes ficam null quando não há intervalo comparável.
+              required: [ticker, returns, relative_strength]
+              properties:
+                ticker: { type: string, example: IBOV }
+                returns:
+                  type: object
+                  required: [return_7d]
+                  properties:
+                    return_7d: { $ref: '#/components/schemas/IntelligenceNumber', description: Retorno do benchmark nas mesmas datas inicial e final usadas para a força relativa. }
+                relative_strength:
+                  type: object
+                  required: [return_7d_pp]
+                  properties:
+                    return_7d_pp: { $ref: '#/components/schemas/IntelligenceNumber', description: Retorno percentual do ativo menos retorno percentual do benchmark, em pontos percentuais, sem arredondamento intermediário. }
+            signals:
+              type: array
+              description: Todas as seis avaliações do ruleset 1.0, em ordem estável, incluindo estados not_triggered e unavailable.
+              minItems: 6
+              maxItems: 6
+              items: { $ref: '#/components/schemas/IntelligenceSignal' }
         meta:
           type: object
           required: [status, market_type, as_of, source, price_adjustment, window_unit, percentage_unit, unavailable]
@@ -289,8 +416,9 @@ components:
             price_adjustment: { type: string, const: unadjusted }
             window_unit: { type: string, const: trading_sessions }
             percentage_unit: { type: string, const: percent }
-            calculation_version: { type: string, example: '1.1', description: Presente somente quando includeDetails=true. }
-            data_version: { type: string, description: Presente somente quando includeDetails=true. Hash do histórico e seus metadados; não inclui calendário. }
+            calculation_version: { type: string, example: '1.2', description: Presente somente quando includeDetails=true. }
+            ruleset_version: { type: string, const: '1.0', description: Presente somente quando includeDetails=true. Versão das regras determinísticas aplicadas aos indicadores. }
+            data_version: { type: string, description: Presente somente quando includeDetails=true. Hash do histórico do ativo; quando há benchmark, combina as versões dos dois históricos. Não inclui calendário. }
             rsi_seed_from: { type: string, format: date, description: Presente somente quando includeDetails=true. }
             unavailable:
               type: array
@@ -299,7 +427,7 @@ components:
                 required: [field, reason]
                 properties:
                   field: { type: string, example: momentum.rsi14_percentile }
-                  reason: { type: string, enum: [insufficient_history, calendar_unavailable, calendar_missing_year, calendar_invalid_coverage, calendar_outside_coverage, missing_sessions, invalid_data] }
+                  reason: { type: string, enum: [benchmark_not_found, insufficient_history, no_comparable_dates, calendar_unavailable, calendar_missing_year, calendar_invalid_coverage, calendar_outside_coverage, missing_sessions, invalid_data] }
     ComparisonMetrics:
       type: array
       description: Omissão ou lista JSON vazia aplica as métricas padrão; duplicidades são removidas.
